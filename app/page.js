@@ -29,16 +29,14 @@ export default function Home() {
   const [mediaPreview, setMediaPreview] = useState(null);
   const [mediaType, setMediaType] = useState(null);
 
-  // Profile & Social State
+  // Profile State
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [reputation, setReputation] = useState(0);
   const [userLikes, setUserLikes] = useState([]);
-  const [followersList, setFollowersList] = useState([]);
-  const [followingList, setFollowingList] = useState([]);
-  const [socialModalType, setSocialModalType] = useState(null); // 'followers' | 'following' | null
-  const [viewingProfile, setViewingProfile] = useState(null);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   // Discover Page State
   const [discoverSearch, setDiscoverSearch] = useState('');
@@ -53,13 +51,17 @@ export default function Home() {
     { id: 3, name: 'Design Systems Hub', desc: 'UI/UX designers sharing Figma, CSS, and aesthetic web art.', members: 890, tag: 'Design' }
   ]);
 
-  // Messages & Live DMs State
+  // Settings Modal State
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Messages & Activity State
   const [msgSubTab, setMsgSubTab] = useState('activity');
-  const [activities, setActivities] = useState([
-    { id: 1, type: 'rep', text: 'Welcome to BMAX! Your reputation ledger initialized at 0 PTS.', time: 'Just now' }
+  const [activities, setActivities] = useState([]);
+  const [conversations] = useState([
+    { id: '1', user: 'alex_dev', lastMsg: 'Hey, checked your latest project!', unread: true },
+    { id: '2', user: 'sara_code', lastMsg: 'Let us collaborate on Next.js', unread: false }
   ]);
-  const [conversations, setConversations] = useState([]);
-  const [activeChatUser, setActiveChatUser] = useState(null); // { id, username }
+  const [activeChat, setActiveChat] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
   const [chatInput, setChatInput] = useState('');
 
@@ -83,136 +85,230 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetchPosts();
-    if (user) {
-      fetchUserProfile();
-      fetchUserLikes();
-      fetchSocialConnections();
-      fetchConversations();
-    }
-  }, [user]);
+    let cancelled = false;
 
-  // Real-time Chat Subscription
-  useEffect(() => {
-    if (!user || !activeChatUser) return;
-    
-    fetchChatHistory(activeChatUser.id);
+    const loadUserData = async () => {
+      // Global broadcasts can be loaded independently of the auth state.
+      // User-specific data is loaded only after Supabase restores the session.
+      const tasks = [fetchPosts()];
 
-    const channel = supabase
-      .channel('public:messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
-        const newMsg = payload.new;
-        if (
-          (newMsg.sender_id === user.id && newMsg.receiver_id === activeChatUser.id) ||
-          (newMsg.sender_id === activeChatUser.id && newMsg.receiver_id === user.id)
-        ) {
-          setChatHistory(prev => [...prev, newMsg]);
+      if (user?.id) {
+        tasks.push(
+          fetchUserProfile(),
+          fetchUserLikes(),
+          fetchFollowCounts(),
+          fetchActivities(),
+        );
+      }
+
+      const results = await Promise.allSettled(tasks);
+
+      if (cancelled) return;
+
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.error(`BMAX initial load ${index} failed:`, result.reason);
         }
-      })
-      .subscribe();
+      });
+
+      if (!user?.id) {
+        setUserLikes([]);
+        setActivities([]);
+        setReputation(0);
+        setFollowersCount(0);
+        setFollowingCount(0);
+      }
+    };
+
+    loadUserData();
 
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
     };
-  }, [activeChatUser, user]);
+  }, [user?.id]);
+
+  const formatRelativeTime = (timestamp) => {
+    if (!timestamp) return '';
+
+    const diffMs = Date.now() - new Date(timestamp).getTime();
+    const diffSeconds = Math.max(0, Math.floor(diffMs / 1000));
+
+    if (diffSeconds < 60) return 'Just now';
+
+    const minutes = Math.floor(diffSeconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  const formatReputationActivity = (log) => {
+    const points = Number(log.points) || 0;
+    const sign = points >= 0 ? '+' : '';
+
+    const labels = {
+      broadcast_published: 'Broadcast published',
+      post_received_like: 'Your broadcast received a like',
+      community_engagement: 'Community engagement',
+    };
+
+    return `${labels[log.action_type] || log.action_type} (${sign}${points} Rep)`;
+  };
 
   const fetchUserProfile = async () => {
-    if (!user) return;
-    const { data } = await supabase
+    if (!user?.id) return;
+
+    const { data, error } = await supabase
       .from('profiles')
-      .select('username, bio, reputation')
+      .select('id, username, bio, reputation')
       .eq('id', user.id)
       .maybeSingle();
 
-    if (data) {
-      if (data.username) setUsername(data.username);
-      if (data.bio) setBio(data.bio);
-      if (data.reputation !== undefined) setReputation(data.reputation);
-    }
-  };
-
-  const fetchSocialConnections = async () => {
-    if (!user) return;
-    
-    // Get Followers with profile details
-    const { data: followersData } = await supabase
-      .from('follows')
-      .select('follower_id, profiles!follows_follower_id_fkey(id, username, bio)')
-      .eq('following_id', user.id);
-
-    if (followersData) {
-      setFollowersList(followersData.map(item => item.profiles).filter(Boolean));
+    if (error) {
+      console.error('BMAX profile load error:', error);
+      return;
     }
 
-    // Get Following with profile details
-    const { data: followingData } = await supabase
-      .from('follows')
-      .select('following_id, profiles!follows_following_id_fkey(id, username, bio)')
-      .eq('follower_id', user.id);
+    if (!data) {
+      // Email-confirmation flows may create the auth user before the browser
+      // has an authenticated session. Create the profile on first signed-in load.
+      const fallbackUsername = (user.email || 'builder').split('@')[0];
 
-    if (followingData) {
-      setFollowingList(followingData.map(item => item.profiles).filter(Boolean));
+      const { data: createdProfile, error: createProfileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          username: fallbackUsername,
+          reputation: 0,
+        }, {
+          onConflict: 'id',
+        })
+        .select('id, username, bio, reputation')
+        .single();
+
+      if (createProfileError) {
+        console.error('BMAX profile creation error:', createProfileError);
+        return;
+      }
+
+      setUsername(createdProfile?.username || fallbackUsername);
+      setBio(createdProfile?.bio || '');
+      setReputation(Number(createdProfile?.reputation) || 0);
+      return;
     }
+
+    setUsername(data.username || '');
+    setBio(data.bio || '');
+    setReputation(Number(data.reputation) || 0);
   };
 
-  const fetchConversations = async () => {
-    if (!user) return;
-    const { data } = await supabase
-      .from('messages')
-      .select('*, sender:profiles!messages_sender_id_fkey(id, username), receiver:profiles!messages_receiver_id_fkey(id, username)')
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      .order('created_at', { ascending: false });
+  const fetchFollowCounts = async () => {
+    if (!user?.id) return;
 
-    if (data) {
-      const map = new Map();
-      data.forEach(msg => {
-        const otherUser = msg.sender_id === user.id ? msg.receiver : msg.sender;
-        if (otherUser && !map.has(otherUser.id)) {
-          map.set(otherUser.id, { user: otherUser, lastMsg: msg.content, time: msg.created_at });
-        }
-      });
-      setConversations(Array.from(map.values()));
+    const [followersResult, followingResult] = await Promise.all([
+      supabase
+        .from('follows')
+        .select('*', { count: 'exact', head: true })
+        .eq('following_id', user.id),
+      supabase
+        .from('follows')
+        .select('*', { count: 'exact', head: true })
+        .eq('follower_id', user.id),
+    ]);
+
+    if (followersResult.error) {
+      console.error('BMAX followers load error:', followersResult.error);
     }
-  };
 
-  const fetchChatHistory = async (otherUserId) => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
-      .order('created_at', { ascending: true });
+    if (followingResult.error) {
+      console.error('BMAX following load error:', followingResult.error);
+    }
 
-    if (data) setChatHistory(data);
-  };
-
-  const handleSendMessage = async () => {
-    if (!chatInput.trim() || !activeChatUser) return;
-    const text = chatInput;
-    setChatInput('');
-
-    const { error } = await supabase.from('messages').insert({
-      sender_id: user.id,
-      receiver_id: activeChatUser.id,
-      content: text
-    });
-
-    if (error) alert(`Failed to send message: ${error.message}`);
-    else fetchConversations();
+    setFollowersCount(followersResult.count || 0);
+    setFollowingCount(followingResult.count || 0);
   };
 
   const fetchPosts = async () => {
-    const { data, error } = await supabase
+    const { data: postRows, error: postsError } = await supabase
       .from('posts')
-      .select('*, profiles(id, username)')
+      .select('id, user_id, caption, post_type, media_url, media_type, created_at')
       .order('created_at', { ascending: false });
 
-    if (!error && data) setPosts(data);
+    if (postsError) {
+      console.error('BMAX posts load error:', postsError);
+      return;
+    }
+
+    const rows = postRows || [];
+    const userIds = [...new Set(rows.map(post => post.user_id).filter(Boolean))];
+
+    let profileMap = {};
+
+    if (userIds.length > 0) {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, username')
+        .in('id', userIds);
+
+      if (profilesError) {
+        console.error('BMAX post profiles load error:', profilesError);
+      } else {
+        profileMap = Object.fromEntries(
+          (profilesData || []).map(profile => [profile.id, profile])
+        );
+      }
+    }
+
+    setPosts(
+      rows.map(post => ({
+        ...post,
+        profiles: profileMap[post.user_id] || null,
+      }))
+    );
   };
 
   const fetchUserLikes = async () => {
-    if (!user) return;
-    const { data } = await supabase.from('likes').select('post_id').eq('user_id', user.id);
-    if (data) setUserLikes(data.map(l => l.post_id));
+    if (!user?.id) return;
+
+    const { data, error } = await supabase
+      .from('likes')
+      .select('post_id')
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('BMAX likes load error:', error);
+      return;
+    }
+
+    setUserLikes((data || []).map(row => row.post_id));
+  };
+
+  const fetchActivities = async () => {
+    if (!user?.id) return;
+
+    const { data, error } = await supabase
+      .from('reputation_logs')
+      .select('id, points, action_type, reference_id, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('BMAX activity ledger load error:', error);
+      return;
+    }
+
+    setActivities((data || []).map(log => ({
+      id: log.id,
+      type: 'rep',
+      text: formatReputationActivity(log),
+      time: formatRelativeTime(log.created_at),
+    })));
   };
 
   const handleMediaSelect = (e) => {
@@ -228,152 +324,298 @@ export default function Home() {
           alert('Video duration must be 1 minute (60 seconds) or less.');
           return;
         }
+        clearMediaPreview();
         setMediaFile(file);
         setMediaType('video');
         setMediaPreview(URL.createObjectURL(file));
       };
       video.src = URL.createObjectURL(file);
     } else if (file.type.startsWith('image/')) {
+      clearMediaPreview();
       setMediaFile(file);
       setMediaType('image');
       setMediaPreview(URL.createObjectURL(file));
+    } else {
+      alert('Please select an image or video file.');
     }
   };
 
   const clearMediaPreview = () => {
+    if (mediaPreview?.startsWith('blob:')) {
+      URL.revokeObjectURL(mediaPreview);
+    }
+
     setMediaFile(null);
     setMediaPreview(null);
     setMediaType(null);
   };
 
   const handleSaveProfile = async () => {
-    if (!user) return;
-    const { error } = await supabase.from('profiles').upsert({
-      id: user.id,
-      username,
-      bio,
-      updated_at: new Date()
-    });
+    if (!user?.id) return;
 
-    if (error) alert(`Error updating profile: ${error.message}`);
-    else {
-      setIsEditingProfile(false);
-      alert('Profile updated successfully!');
+    const cleanUsername = username.trim();
+    const cleanBio = bio.trim();
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        username: cleanUsername,
+        bio: cleanBio,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'id',
+      })
+      .select('id, username, bio, reputation')
+      .single();
+
+    if (error) {
+      console.error('BMAX profile update error:', error);
+      alert(`Error updating profile: ${error.message}`);
+      return;
     }
+
+    setUsername(data?.username || '');
+    setBio(data?.bio || '');
+    setReputation(Number(data?.reputation) || 0);
+    setIsEditingProfile(false);
+    alert('Profile updated successfully!');
   };
 
   const handleCreatePost = async (e) => {
     e.preventDefault();
-    if (!user) return alert('Please sign in to publish a broadcast.');
-    if (!postText.trim() && !mediaFile) return alert('Broadcast content or media cannot be empty.');
+
+    if (!user?.id) {
+      alert('Please sign in to publish a broadcast.');
+      return;
+    }
+
+    if (!postText.trim() && !mediaFile) {
+      alert('Broadcast content or media cannot be empty.');
+      return;
+    }
 
     setUploading(true);
-    let mediaUrl = null;
 
-    if (mediaFile) {
-      const fileExt = mediaFile.name.split('.').pop();
-      const fileName = `${Math.random()}.${fileExt}`;
-      const filePath = `post-media/${fileName}`;
+    try {
+      let mediaUrl = null;
 
-      const { error: uploadError } = await supabase.storage.from('posts').upload(filePath, mediaFile);
-      if (!uploadError) {
-        const { data: urlData } = supabase.storage.from('posts').getPublicUrl(filePath);
-        mediaUrl = urlData?.publicUrl;
+      // Upload media first. Never create a post if the upload failed.
+      if (mediaFile) {
+        const fileExt = mediaFile.name.split('.').pop()?.toLowerCase() || 'bin';
+        const fileName = `${user.id}/${crypto.randomUUID()}.${fileExt}`;
+        const filePath = `post-media/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('posts')
+          .upload(filePath, mediaFile, {
+            upsert: false,
+            contentType: mediaFile.type,
+          });
+
+        if (uploadError) {
+          console.error('BMAX media upload error:', uploadError);
+          throw new Error(`Media upload failed: ${uploadError.message}`);
+        }
+
+        const { data: urlData } = supabase.storage
+          .from('posts')
+          .getPublicUrl(filePath);
+
+        mediaUrl = urlData?.publicUrl || null;
+
+        if (!mediaUrl) {
+          throw new Error('Media uploaded, but no public media URL was returned.');
+        }
       }
-    }
 
-    // Insert Post
-    const { data, error } = await supabase
-      .from('posts')
-      .insert({
-        user_id: user.id,
-        caption: postText,
-        post_type: composerType,
-        media_url: mediaUrl,
-        media_type: mediaType
-      })
-      .select('*, profiles(id, username)')
-      .single();
+      // The database trigger awards +1 Rep after this insert.
+      // Do NOT insert into reputation_logs from the client.
+      const { error: postError } = await supabase
+        .from('posts')
+        .insert({
+          user_id: user.id,
+          caption: postText.trim() || null,
+          post_type: composerType,
+          media_url: mediaUrl,
+          media_type: mediaUrl ? mediaType : null,
+        });
 
-    if (!error && data) {
-      // Award reputation point and log it
-      const newRep = reputation + 1;
-      await supabase.from('profiles').update({ reputation: newRep }).eq('id', user.id);
-      await supabase.from('reputation_logs').insert({
-        user_id: user.id,
-        points: 1,
-        action_type: 'broadcast_published'
-      });
-      setReputation(newRep);
-      setPosts([data, ...posts]);
-    }
+      if (postError) {
+        console.error('BMAX post insert error:', postError);
+        throw new Error(`Could not publish broadcast: ${postError.message}`);
+      }
 
-    setUploading(false);
+      // Reload the authoritative database state.
+      await Promise.all([
+        fetchPosts(),
+        fetchUserProfile(),
+        fetchActivities(),
+      ]);
 
-    if (error) {
-      alert(`Could not publish broadcast: ${error.message}`);
-    } else {
       setPostText('');
       clearMediaPreview();
+
       alert('Broadcast successfully published & +1 Rep earned!');
+    } catch (error) {
+      console.error('BMAX broadcast error:', error);
+      alert(error?.message || 'An unexpected error occurred while publishing.');
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleFollowUser = async (targetUserId) => {
-    if (!user) return alert('Please log in.');
-    const isFollowing = followingList.some(f => f.id === targetUserId);
-
-    if (isFollowing) {
-      await supabase.from('follows').delete().eq('follower_id', user.id).eq('following_id', targetUserId);
-    } else {
-      await supabase.from('follows').insert({ follower_id: user.id, following_id: targetUserId });
-    }
-    fetchSocialConnections();
+  const handleCreateCommunity = (e) => {
+    e.preventDefault();
+    if (!communityName.trim()) return alert('Please enter a community name.');
+    const newComm = {
+      id: Date.now(),
+      name: communityName,
+      desc: communityDesc || 'A newly created builder community.',
+      members: 1,
+      tag: communityTag
+    };
+    setCommunities([newComm, ...communities]);
+    setCommunityName('');
+    setCommunityDesc('');
+    alert(`Community "${newComm.name}" created successfully!`);
   };
 
   const handleLike = async (postId) => {
-    if (!user) return alert('Please log in to react.');
+    if (!user?.id) {
+      alert('Please log in to react.');
+      return;
+    }
+
     const isLiked = userLikes.includes(postId);
 
     if (isLiked) {
-      await supabase.from('likes').delete().eq('user_id', user.id).eq('post_id', postId);
+      const { error } = await supabase
+        .from('likes')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('post_id', postId);
+
+      if (error) {
+        console.error('BMAX unlike error:', error);
+        alert(`Could not remove like: ${error.message}`);
+        return;
+      }
+
       setUserLikes(prev => prev.filter(id => id !== postId));
     } else {
-      await supabase.from('likes').insert([{ user_id: user.id, post_id: postId }]);
+      const { error } = await supabase
+        .from('likes')
+        .insert({
+          user_id: user.id,
+          post_id: postId,
+        });
+
+      if (error) {
+        console.error('BMAX like error:', error);
+        alert(`Could not like post: ${error.message}`);
+        return;
+      }
+
       setUserLikes(prev => [...prev, postId]);
     }
-    fetchPosts();
+
+    // PostgreSQL handles reputation rewards through the likes trigger.
+    await Promise.all([
+      fetchPosts(),
+      fetchUserProfile(),
+      fetchActivities(),
+    ]);
   };
 
   const handleSignIn = async (e) => {
     e.preventDefault();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !password) {
+      setAuthMessage('Enter your email and password.');
+      setAuthMessageType('error');
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
+
     if (error) {
+      console.error('BMAX sign-in error:', error);
       setAuthMessage(error.message);
       setAuthMessageType('error');
-    } else {
-      setAuthMessage('Signed in successfully.');
-      setAuthMessageType('success');
+      return;
     }
+
+    setAuthMessage('Signed in successfully.');
+    setAuthMessageType('success');
   };
 
   const handleSignUp = async (e) => {
     e.preventDefault();
-    const { data, error } = await supabase.auth.signUp({ email, password });
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !password) {
+      setAuthMessage('Enter an email and password to create an account.');
+      setAuthMessageType('error');
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+    });
+
     if (error) {
+      console.error('BMAX sign-up error:', error);
       setAuthMessage(error.message);
       setAuthMessageType('error');
-    } else {
-      if (data?.user) {
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          username: email.split('@')[0],
-          reputation: 0
-        });
-      }
-      setAuthMessage('Account created! Reputation ledger initialized at 0 PTS.');
-      setAuthMessageType('success');
+      return;
     }
+
+    if (data?.user && data?.session) {
+      // Only initialize the profile from the browser when a real authenticated
+      // session exists. If email confirmation is enabled, fetchUserProfile()
+      // creates the profile after the user signs in.
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: data.user.id,
+          username: cleanEmail.split('@')[0],
+          reputation: 0,
+        }, {
+          onConflict: 'id',
+        });
+
+      if (profileError) {
+        console.error('BMAX profile initialization error:', profileError);
+        setAuthMessage(`Account created, but profile setup failed: ${profileError.message}`);
+        setAuthMessageType('error');
+        return;
+      }
+
+      setUsername(cleanEmail.split('@')[0]);
+      setBio('');
+      setReputation(0);
+    }
+
+    setAuthMessage(
+      data?.session
+        ? 'Account created and signed in. Reputation starts at 0 PTS.'
+        : 'Account created. Check your email if confirmation is required, then sign in. Your BMAX profile will initialize automatically.'
+    );
+    setAuthMessageType('success');
+  };
+
+  const handleSendMessage = () => {
+    if (!chatInput.trim()) return;
+    setChatHistory(prev => [...prev, { sender: 'me', text: chatInput, time: 'Just now' }]);
+    setChatInput('');
   };
 
   const filteredPosts = posts.filter(post => {
@@ -396,7 +638,7 @@ export default function Home() {
         }
       `}</style>
 
-      {/* HEADER */}
+      {/* ELITE PROFESSIONAL HEADER */}
       <header style={styles.header}>
         <div style={styles.brandGroup}>
           <h1 style={styles.logo}>BMAX</h1>
@@ -406,7 +648,7 @@ export default function Home() {
           {['home', 'discover', 'create', 'messages', 'profile'].map((tab) => (
             <button
               key={tab}
-              onClick={() => { setActiveTab(tab); setViewingProfile(null); }}
+              onClick={() => setActiveTab(tab)}
               style={activeTab === tab ? styles.activeNavBtn : styles.navBtn}
             >
               {tab === 'home' && '⚡ Feed'}
@@ -419,43 +661,18 @@ export default function Home() {
         </nav>
       </header>
 
-      {/* MAIN LAYOUT */}
+      {/* MAIN VIEW CONTROLLER */}
       <div style={styles.layoutContainer} className="responsive-grid">
-        {viewingProfile ? (
-          /* VIEW OTHER USER PROFILE */
-          <main style={{ gridColumn: '1 / -1', maxWidth: '700px', margin: '0 auto', width: '100%' }}>
-            <div style={styles.card}>
-              <button onClick={() => setViewingProfile(null)} style={{ ...styles.actionBtn, marginBottom: '16px' }}>← Back to Feed</button>
-              <div style={styles.profileHeader}>
-                <div style={styles.avatar}>👤</div>
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ margin: 0, color: '#f8fafc', fontSize: '20px' }}>@{viewingProfile.username}</h2>
-                  <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 12px 0' }}>{viewingProfile.bio || 'No bio configured.'}</p>
-                </div>
-              </div>
-              <div style={{ marginTop: '16px', display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={() => handleFollowUser(viewingProfile.id)}
-                  style={followingList.some(f => f.id === viewingProfile.id) ? styles.secondaryBtn : styles.primaryBtn}
-                >
-                  {followingList.some(f => f.id === viewingProfile.id) ? 'Following ✓' : 'Follow'}
-                </button>
-                <button
-                  onClick={() => { setActiveTab('messages'); setActiveChatUser(viewingProfile); setViewingProfile(null); }}
-                  style={styles.secondaryBtn}
-                >
-                  💬 Message
-                </button>
-              </div>
-            </div>
-          </main>
-        ) : activeTab === 'discover' ? (
+        {activeTab === 'discover' ? (
           <main style={{ gridColumn: '1 / -1', maxWidth: '900px', margin: '0 auto', width: '100%' }}>
             <div style={styles.card}>
               <h2 style={{ margin: '0 0 10px 0', color: '#c084fc', fontSize: '20px' }}>🧭 Global Network Discovery</h2>
+              <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '20px' }}>
+                Explore open broadcasts and community insights from top-tier creators worldwide.
+              </p>
               <input
                 type="text"
-                placeholder="🔍 Search creator broadcasts..."
+                placeholder="🔍 Search creator broadcasts or keywords..."
                 value={discoverSearch}
                 onChange={(e) => setDiscoverSearch(e.target.value)}
                 style={{ ...styles.input, padding: '12px 16px', fontSize: '14px', marginBottom: '20px' }}
@@ -464,9 +681,7 @@ export default function Home() {
                 {filteredPosts.map((post) => (
                   <div key={post.id} style={styles.postCard}>
                     <div style={styles.postHeader}>
-                      <span onClick={() => setViewingProfile(post.profiles)} style={{ ...styles.username, cursor: 'pointer' }}>
-                        @{post.profiles?.username || 'builder'}
-                      </span>
+                      <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
                       <span style={styles.postType}>{post.post_type}</span>
                     </div>
                     <p style={styles.postContent}>{post.caption}</p>
@@ -488,23 +703,49 @@ export default function Home() {
           <main style={{ gridColumn: '1 / -1', maxWidth: '850px', margin: '0 auto', width: '100%' }}>
             <div style={styles.card}>
               <h2 style={{ margin: '0 0 8px 0', color: '#c084fc', fontSize: '20px' }}>🌐 Builder Ecosystem Creator</h2>
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                if (!communityName.trim()) return alert('Enter name.');
-                setCommunities([{ id: Date.now(), name: communityName, desc: communityDesc, members: 1, tag: communityTag }, ...communities]);
-                setCommunityName(''); setCommunityDesc('');
-                alert('Hub launched!');
-              }} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}>
-                <input type="text" placeholder="Community Name" value={communityName} onChange={(e) => setCommunityName(e.target.value)} style={{ ...styles.input, padding: '12px' }} />
-                <textarea placeholder="Mission..." value={communityDesc} onChange={(e) => setCommunityDesc(e.target.value)} style={{ ...styles.textArea, minHeight: '80px' }} />
-                <button type="submit" style={styles.primaryBtn}>🚀 Launch Hub</button>
+              <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '20px' }}>
+                Launch dedicated collaborative hubs and lead high-impact technical communities.
+              </p>
+              <form onSubmit={handleCreateCommunity} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}>
+                <input
+                  type="text"
+                  placeholder="Community Name (e.g. Next.js Masters)"
+                  value={communityName}
+                  onChange={(e) => setCommunityName(e.target.value)}
+                  style={{ ...styles.input, padding: '12px' }}
+                />
+                <textarea
+                  placeholder="Describe your community mission..."
+                  value={communityDesc}
+                  onChange={(e) => setCommunityDesc(e.target.value)}
+                  style={{ ...styles.textArea, minHeight: '80px' }}
+                />
+                <div style={styles.formActionRow}>
+                  <select
+                    value={communityTag}
+                    onChange={(e) => setCommunityTag(e.target.value)}
+                    style={{ ...styles.input, width: '160px', padding: '10px' }}
+                  >
+                    <option value="Tech">Tech & Code</option>
+                    <option value="AI">AI & ML</option>
+                    <option value="Design">UI/UX Design</option>
+                  </select>
+                  <button type="submit" style={styles.primaryBtn}>🚀 Launch Hub</button>
+                </div>
               </form>
+              <h3 style={{ fontSize: '16px', color: '#f8fafc', margin: '20px 0 12px 0' }}>Featured Communities</h3>
               <div style={styles.communityGrid} className="community-grid">
                 {communities.map(comm => (
                   <div key={comm.id} style={styles.miniCard}>
-                    <strong style={{ color: '#e879f9' }}>{comm.name}</strong>
-                    <p style={{ fontSize: '12px', color: '#94a3b8' }}>{comm.desc}</p>
-                    <button onClick={() => alert(`Joined ${comm.name}!`)} style={styles.secondaryBtn}>Join</button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <strong style={{ color: '#e879f9' }}>{comm.name}</strong>
+                      <span style={styles.tagBadge}>{comm.tag}</span>
+                    </div>
+                    <p style={{ fontSize: '12px', color: '#94a3b8', margin: '8px 0' }}>{comm.desc}</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <small style={{ color: '#fbbf24' }}>👥 {comm.members} Members</small>
+                      <button onClick={() => alert(`Joined ${comm.name}!`)} style={styles.secondaryBtn}>Join</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -519,8 +760,8 @@ export default function Home() {
                   <h2 style={{ margin: 0, color: '#f8fafc', fontSize: '20px' }}>@{username || user?.email || 'builder'}</h2>
                   <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 12px 0' }}>{bio || 'No bio configured yet.'}</p>
                   <div style={styles.profileStatsRow}>
-                    <div onClick={() => setSocialModalType('followers')} style={{ cursor: 'pointer' }}><strong>{followersList.length}</strong> <small style={{ color: '#64748b' }}>Followers</small></div>
-                    <div onClick={() => setSocialModalType('following')} style={{ cursor: 'pointer' }}><strong>{followingList.length}</strong> <small style={{ color: '#64748b' }}>Following</small></div>
+                    <div><strong>{followersCount}</strong> <small style={{ color: '#64748b' }}>Followers</small></div>
+                    <div><strong>{followingCount}</strong> <small style={{ color: '#64748b' }}>Following</small></div>
                     <div><strong style={{ color: '#fbbf24' }}>🛡️ {reputation}</strong> <small style={{ color: '#64748b' }}>Reputation PTS</small></div>
                   </div>
                 </div>
@@ -532,31 +773,21 @@ export default function Home() {
               </div>
               {isEditingProfile && (
                 <div style={styles.editSection}>
-                  <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} style={styles.input} />
-                  <textarea placeholder="Bio" maxLength={200} value={bio} onChange={(e) => setBio(e.target.value)} style={{ ...styles.textArea, minHeight: '60px' }} />
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={styles.input}
+                  />
+                  <textarea
+                    placeholder="Bio"
+                    maxLength={200}
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    style={{ ...styles.textArea, minHeight: '60px' }}
+                  />
                   <button onClick={handleSaveProfile} style={{ ...styles.primaryBtn, marginTop: '8px' }}>Save Profile</button>
-                </div>
-              )}
-
-              {/* SOCIAL LIST MODAL VIEW */}
-              {socialModalType && (
-                <div style={{ marginTop: '20px', borderTop: '1px solid #1e1b4b', paddingTop: '15px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <h4 style={{ margin: 0, color: '#c084fc', textTransform: 'capitalize' }}>{socialModalType} List</h4>
-                    <button onClick={() => setSocialModalType(null)} style={styles.actionBtn}>Close ✕</button>
-                  </div>
-                  {(socialModalType === 'followers' ? followersList : followingList).length === 0 ? (
-                    <p style={{ fontSize: '13px', color: '#64748b' }}>No users found here yet.</p>
-                  ) : (
-                    (socialModalType === 'followers' ? followersList : followingList).map(person => (
-                      <div key={person.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #120b24' }}>
-                        <span onClick={() => { setViewingProfile(person); setSocialModalType(null); }} style={{ color: '#f8fafc', cursor: 'pointer', fontWeight: 'bold' }}>
-                          @{person.username}
-                        </span>
-                        <button onClick={() => { setActiveTab('messages'); setActiveChatUser(person); setSocialModalType(null); }} style={styles.secondaryBtn}>Message</button>
-                      </div>
-                    ))
-                  )}
                 </div>
               )}
             </div>
@@ -566,16 +797,30 @@ export default function Home() {
               <h3 style={{ margin: '0 0 12px 0', color: '#c084fc', fontSize: '16px' }}>📡 Broadcast New Post</h3>
               <div style={styles.composerTabs}>
                 {['update', 'code block', 'poll'].map((type) => (
-                  <button key={type} onClick={() => setComposerType(type)} style={composerType === type ? styles.activeChip : styles.chip}>
-                    {type}
+                  <button
+                    key={type}
+                    onClick={() => setComposerType(type)}
+                    style={composerType === type ? styles.activeChip : styles.chip}
+                  >
+                    {type === 'update' ? '📌 Update' : type === 'code block' ? '‹/› Code Block' : '📊 Poll'}
                   </button>
                 ))}
               </div>
               <form onSubmit={handleCreatePost} style={styles.composerForm}>
-                <textarea value={postText} onChange={(e) => setPostText(e.target.value)} placeholder="Share a project update..." style={styles.textArea} />
+                <textarea
+                  value={postText}
+                  onChange={(e) => setPostText(e.target.value)}
+                  placeholder="Share a project update, technical insight, or milestone..."
+                  maxLength={5000}
+                  style={styles.textArea}
+                />
                 {mediaPreview && (
                   <div style={styles.previewContainer}>
-                    {mediaType === 'image' ? <img src={mediaPreview} alt="Preview" style={styles.mediaPreview} /> : <video src={mediaPreview} controls style={styles.mediaPreview} />}
+                    {mediaType === 'image' ? (
+                      <img src={mediaPreview} alt="Preview" style={styles.mediaPreview} />
+                    ) : (
+                      <video src={mediaPreview} controls style={styles.mediaPreview} />
+                    )}
                     <button type="button" onClick={clearMediaPreview} style={styles.removeMediaBtn}>✕</button>
                   </div>
                 )}
@@ -584,7 +829,7 @@ export default function Home() {
                     📷 Attach Media
                     <input type="file" accept="image/*,video/*" onChange={handleMediaSelect} style={{ display: 'none' }} />
                   </label>
-                  <button type="submit" disabled={uploading} style={styles.broadcastBtn}>
+                  <button type="submit" disabled={uploading} style={{ ...styles.broadcastBtn, opacity: uploading ? 0.65 : 1, cursor: uploading ? 'not-allowed' : 'pointer' }}>
                     {uploading ? 'Publishing...' : '📡 Broadcast (+1 Rep)'}
                   </button>
                 </div>
@@ -595,26 +840,37 @@ export default function Home() {
           <main style={{ gridColumn: '1 / -1', maxWidth: '800px', margin: '0 auto', width: '100%' }}>
             <div style={styles.card}>
               <div style={styles.subTabHeader}>
-                <button onClick={() => setMsgSubTab('activity')} style={msgSubTab === 'activity' ? styles.activeSubTab : styles.subTab}>🔔 Reputation Ledger</button>
-                <button onClick={() => setMsgSubTab('dms')} style={msgSubTab === 'dms' ? styles.activeSubTab : styles.subTab}>💬 Direct Messages</button>
+                <button onClick={() => setMsgSubTab('activity')} style={msgSubTab === 'activity' ? styles.activeSubTab : styles.subTab}>
+                  🔔 Reputation & Activity Ledger
+                </button>
+                <button onClick={() => setMsgSubTab('dms')} style={msgSubTab === 'dms' ? styles.activeSubTab : styles.subTab}>
+                  💬 Direct Messages
+                </button>
               </div>
               {msgSubTab === 'activity' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {activities.map(act => (
-                    <div key={act.id} style={styles.activityCard}>
-                      <div>{act.text}</div>
-                      <small style={{ color: '#64748b' }}>{act.time}</small>
+                  {activities.length === 0 ? (
+                    <div style={styles.activityCard}>
+                      <div>No reputation activity recorded yet.</div>
+                      <small style={{ color: '#64748b' }}>Publish a broadcast to earn your first point.</small>
                     </div>
-                  ))}
+                  ) : (
+                    activities.map(act => (
+                      <div key={act.id} style={styles.activityCard}>
+                        <div>{act.text}</div>
+                        <small style={{ color: '#64748b' }}>{act.time}</small>
+                      </div>
+                    ))
+                  )}
                 </div>
-              ) : activeChatUser ? (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '450px' }}>
-                  <button onClick={() => setActiveChatUser(null)} style={{ ...styles.actionBtn, marginBottom: '8px' }}>← Back to Inbox</button>
-                  <h4 style={{ margin: '0 0 12px 0', color: '#fbbf24' }}>Chat with @{activeChatUser.username}</h4>
-                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
+              ) : activeChat ? (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
+                  <button onClick={() => setActiveChat(null)} style={{ ...styles.actionBtn, marginBottom: '8px' }}>← Back</button>
+                  <h4 style={{ margin: '0 0 12px 0', color: '#fbbf24' }}>Chat with @{activeChat}</h4>
+                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {chatHistory.map((msg, idx) => (
-                      <div key={idx} style={{ alignSelf: msg.sender_id === user.id ? 'flex-end' : 'flex-start', backgroundColor: msg.sender_id === user.id ? '#7e22ce' : '#1e1b4b', padding: '8px 12px', borderRadius: '8px', maxWidth: '70%' }}>
-                        <p style={{ margin: 0, fontSize: '13px' }}>{msg.content}</p>
+                      <div key={idx} style={{ alignSelf: msg.sender === 'me' ? 'flex-end' : 'flex-start', backgroundColor: msg.sender === 'me' ? '#7e22ce' : '#1e1b4b', padding: '8px 12px', borderRadius: '8px', maxWidth: '70%' }}>
+                        <p style={{ margin: 0, fontSize: '13px' }}>{msg.text}</p>
                       </div>
                     ))}
                   </div>
@@ -625,37 +881,42 @@ export default function Home() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {conversations.length === 0 ? (
-                    <p style={{ fontSize: '13px', color: '#64748b' }}>No conversations yet. Visit profiles and click Message to start chatting!</p>
-                  ) : (
-                    conversations.map(conv => (
-                      <div key={conv.user.id} onClick={() => setActiveChatUser(conv.user)} style={styles.conversationCard}>
-                        <div>
-                          <strong>@{conv.user.username}</strong>
-                          <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>{conv.lastMsg}</p>
-                        </div>
+                  {conversations.map(conv => (
+                    <div key={conv.id} onClick={() => setActiveChat(conv.user)} style={styles.conversationCard}>
+                      <div>
+                        <strong>@{conv.user}</strong>
+                        <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>{conv.lastMsg}</p>
                       </div>
-                    ))
-                  )}
+                      {conv.unread && <span style={styles.unreadBadge}>New</span>}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           </main>
         ) : (
-          /* HOME FEED */
+          /* PREMIUM INSTAGRAM-KILLER HOME FEED */
           <>
             <main style={styles.feedColumn}>
+              {/* IMMERSIVE FEED TABS */}
               <div style={styles.filterRow}>
                 {['for you', 'following', 'trending', 'code & tech', 'ai labs', 'design'].map((filter) => (
-                  <button key={filter} onClick={() => setFeedFilter(filter)} style={feedFilter === filter ? styles.activeFilterChip : styles.filterChip}>
+                  <button
+                    key={filter}
+                    onClick={() => setFeedFilter(filter)}
+                    style={feedFilter === filter ? styles.activeFilterChip : styles.filterChip}
+                  >
                     {filter}
                   </button>
                 ))}
               </div>
+
+              {/* STREAM POSTS */}
               <div style={styles.streamContainer}>
                 {posts.length === 0 ? (
                   <div style={{ ...styles.card, textAlign: 'center', padding: '40px', color: '#64748b' }}>
                     <p style={{ fontSize: '15px', color: '#94a3b8' }}>No global broadcasts found yet.</p>
+                    <p style={{ fontSize: '13px' }}>Switch to your <strong>Profile tab</strong> to publish the first network update and kick off your reputation score from zero to infinite!</p>
                   </div>
                 ) : (
                   posts.map((post) => {
@@ -665,21 +926,29 @@ export default function Home() {
                         <div style={styles.postHeader}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <div style={styles.feedAvatar}>👤</div>
-                            <span onClick={() => setViewingProfile(post.profiles)} style={{ ...styles.username, cursor: 'pointer' }}>
-                              @{post.profiles?.username || 'builder'}
-                            </span>
+                            <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
                           </div>
                           <span style={styles.postType}>{post.post_type}</span>
                         </div>
+
                         <p style={styles.postContent}>{post.caption}</p>
+
                         {post.media_url && (
                           <div style={styles.mediaWrapper}>
-                            {post.media_type === 'image' ? <img src={post.media_url} alt="Media" style={styles.postMedia} /> : <video src={post.media_url} controls style={styles.postMedia} />}
+                            {post.media_type === 'image' ? (
+                              <img src={post.media_url} alt="Post content" style={styles.postMedia} />
+                            ) : (
+                              <video src={post.media_url} controls style={styles.postMedia} />
+                            )}
                           </div>
                         )}
+
                         <div style={styles.postActions}>
-                          <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>{isLiked ? '❤️ Liked' : '🤍 Like'}</button>
-                          <button onClick={() => { setActiveTab('messages'); setActiveChatUser(post.profiles); }} style={styles.actionBtn}>💬 Message</button>
+                          <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>
+                            {isLiked ? '❤️ Liked' : '🤍 Like'}
+                          </button>
+                          <button style={styles.actionBtn}>💬 Reply</button>
+                          <button style={styles.actionBtn}>🔄 Remix</button>
                         </div>
                       </div>
                     );
@@ -688,25 +957,42 @@ export default function Home() {
               </div>
             </main>
 
+            {/* SIDEBAR WIDGETS */}
             <aside style={styles.sidebarColumn}>
               <div style={styles.card}>
                 <div style={styles.repHeader}>
                   <span style={styles.repTitle}>🛡️ Reputation Ledger</span>
                   <span style={styles.repValue}>{reputation} PTS</span>
                 </div>
-                <p style={styles.subtext}>Earn points dynamically through broadcasts.</p>
+                <p style={styles.subtext}>New accounts start at 0 PTS. Accumulate points steadily through verified broadcasts and engagement.</p>
               </div>
 
               {!user ? (
                 <div style={styles.card}>
                   <h3 style={styles.sidebarTitle}>Join BMAX Global</h3>
-                  {authMessage && <div style={authMessageType === 'error' ? styles.errorBox : styles.successBox}>{authMessage}</div>}
+                  {authMessage && (
+                    <div style={authMessageType === 'error' ? styles.errorBox : styles.successBox}>
+                      {authMessage}
+                    </div>
+                  )}
                   <form style={styles.authForm}>
-                    <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} style={styles.input} />
-                    <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} style={styles.input} />
+                    <input
+                      type="email"
+                      placeholder="Email address"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      style={styles.input}
+                    />
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      style={styles.input}
+                    />
                     <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                      <button onClick={handleSignIn} style={styles.primaryBtn}>Sign In</button>
-                      <button onClick={handleSignUp} style={styles.secondaryBtn}>Sign Up</button>
+                      <button type="button" onClick={handleSignIn} style={styles.primaryBtn}>Sign In</button>
+                      <button type="button" onClick={handleSignUp} style={styles.secondaryBtn}>Sign Up (0 Rep)</button>
                     </div>
                   </form>
                 </div>
@@ -714,7 +1000,7 @@ export default function Home() {
                 <div style={styles.card}>
                   <h3 style={styles.sidebarTitle}>Active Session</h3>
                   <p style={{ color: '#fbbf24', fontWeight: 'bold', margin: '0 0 4px 0' }}>@{username || user.email}</p>
-                  <small style={{ color: '#94a3b8' }}>Reputation Score: <strong>{reputation} PTS</strong></small>
+                  <small style={{ color: '#94a3b8' }}>Reputation Score: <strong>{reputation} PTS</strong> (Verified Ledger)</small>
                 </div>
               )}
             </aside>
@@ -725,7 +1011,11 @@ export default function Home() {
       {/* MOBILE BOTTOM NAVIGATION */}
       <nav style={styles.mobileNav} className="mobile-only">
         {['home', 'discover', 'create', 'messages', 'profile'].map((tab) => (
-          <button key={tab} onClick={() => { setActiveTab(tab); setViewingProfile(null); }} style={activeTab === tab ? styles.activeMobileBtn : styles.mobileBtn}>
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={activeTab === tab ? styles.activeMobileBtn : styles.mobileBtn}
+          >
             {tab === 'home' && '⚡'}
             {tab === 'discover' && '🧭'}
             {tab === 'create' && '➕'}
@@ -758,13 +1048,13 @@ const styles = {
   repValue: { fontWeight: '900', color: '#fbbf24', fontSize: '16px' },
   subtext: { margin: 0, fontSize: '12px', color: '#94a3b8', lineHeight: '1.4' },
   composerTabs: { display: 'flex', gap: '8px', marginBottom: '14px' },
-  chip: { backgroundColor: '#120b24', color: '#94a3b8', border: 'none', padding: '6px 14px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', textTransform: 'capitalize' },
-  activeChip: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold', textTransform: 'capitalize' },
+  chip: { backgroundColor: '#120b24', color: '#94a3b8', border: 'none', padding: '6px 14px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer' },
+  activeChip: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   composerForm: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  textArea: { backgroundColor: '#030008', border: '1px solid #1e1b4b', borderRadius: '10px', color: '#fff', padding: '14px', minHeight: '90px', resize: 'vertical', width: '100%', fontSize: '14px' },
+  textArea: { backgroundColor: '#030008', border: '1px solid #1e1b4b', borderRadius: '10px', color: '#fff', padding: '14px', minHeight: '90px', resize: 'vertical', fontFamily: 'inherit', width: '100%', fontSize: '14px' },
   previewContainer: { position: 'relative', width: '100%', maxHeight: '280px', overflow: 'hidden', borderRadius: '10px', backgroundColor: '#000' },
   mediaPreview: { width: '100%', height: '100%', objectFit: 'contain' },
-  removeMediaBtn: { position: 'absolute', top: '10px', right: '10px', backgroundColor: 'rgba(0,0,0,0.8)', color: '#fff', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer' },
+  removeMediaBtn: { position: 'absolute', top: '10px', right: '10px', backgroundColor: 'rgba(0,0,0,0.8)', color: '#fff', border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', fontSize: '14px' },
   composerFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   iconBtn: { backgroundColor: '#120b24', border: '1px solid #1e1b4b', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', color: '#e879f9', fontSize: '13px', fontWeight: 'bold' },
   broadcastBtn: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
@@ -796,10 +1086,13 @@ const styles = {
   mobileNav: { position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#090514', borderTop: '1px solid #1e1b4b', justifyContent: 'space-around', padding: '12px 0', zIndex: 100 },
   mobileBtn: { backgroundColor: 'transparent', border: 'none', fontSize: '22px', padding: '4px' },
   activeMobileBtn: { backgroundColor: '#1e1b4b', border: '1px solid #7e22ce', fontSize: '22px', borderRadius: '10px', padding: '4px' },
+  formActionRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   communityGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px' },
+  tagBadge: { fontSize: '10px', backgroundColor: '#3b0764', color: '#f0abfc', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' },
   subTabHeader: { display: 'flex', gap: '12px', borderBottom: '1px solid #1e1b4b', paddingBottom: '10px', marginBottom: '14px' },
   subTab: { backgroundColor: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
   activeSubTab: { backgroundColor: 'transparent', border: 'none', color: '#fbbf24', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
   activityCard: { backgroundColor: '#030008', border: '1px solid #1e1b4b', padding: '12px', borderRadius: '8px', fontSize: '13px' },
-  conversationCard: { backgroundColor: '#030008', border: '1px solid #1e1b4b', padding: '14px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }
+  conversationCard: { backgroundColor: '#030008', border: '1px solid #1e1b4b', padding: '14px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
+  unreadBadge: { backgroundColor: '#7e22ce', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }
 };
