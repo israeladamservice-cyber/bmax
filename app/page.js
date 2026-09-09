@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Home, Compass, PlusSquare, MessageSquare, User, Zap, Users, ShieldCheck, Send, Repeat } from 'lucide-react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
 
 export default function BmaxHome() {
   const [activeTab, setActiveTab] = useState('for-you');
