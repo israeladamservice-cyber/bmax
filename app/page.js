@@ -32,6 +32,8 @@ export default function Home() {
   // Profile State
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarFile, setAvatarFile] = useState(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [reputation, setReputation] = useState(0);
   const [userLikes, setUserLikes] = useState([]);
@@ -50,9 +52,6 @@ export default function Home() {
     { id: 2, name: 'AI & Neural Labs', desc: 'Discussing the future of generative models & LLMs.', members: 3100, tag: 'AI' },
     { id: 3, name: 'Design Systems Hub', desc: 'UI/UX designers sharing Figma, CSS, and aesthetic web art.', members: 890, tag: 'Design' }
   ]);
-
-  // Settings Modal State
-  const [showSettings, setShowSettings] = useState(false);
 
   // Messages & Activity State
   const [msgSubTab, setMsgSubTab] = useState('activity');
@@ -88,8 +87,6 @@ export default function Home() {
     let cancelled = false;
 
     const loadUserData = async () => {
-      // Global broadcasts can be loaded independently of the auth state.
-      // User-specific data is loaded only after Supabase restores the session.
       const tasks = [fetchPosts()];
 
       if (user?.id) {
@@ -165,7 +162,7 @@ export default function Home() {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, username, bio, reputation')
+      .select('id, username, bio, reputation, avatar_url')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -175,8 +172,6 @@ export default function Home() {
     }
 
     if (!data) {
-      // Email-confirmation flows may create the auth user before the browser
-      // has an authenticated session. Create the profile on first signed-in load.
       const fallbackUsername = (user.email || 'builder').split('@')[0];
 
       const { data: createdProfile, error: createProfileError } = await supabase
@@ -188,7 +183,7 @@ export default function Home() {
         }, {
           onConflict: 'id',
         })
-        .select('id, username, bio, reputation')
+        .select('id, username, bio, reputation, avatar_url')
         .single();
 
       if (createProfileError) {
@@ -199,12 +194,14 @@ export default function Home() {
       setUsername(createdProfile?.username || fallbackUsername);
       setBio(createdProfile?.bio || '');
       setReputation(Number(createdProfile?.reputation) || 0);
+      setAvatarUrl(createdProfile?.avatar_url || '');
       return;
     }
 
     setUsername(data.username || '');
     setBio(data.bio || '');
     setReputation(Number(data.reputation) || 0);
+    setAvatarUrl(data.avatar_url || '');
   };
 
   const fetchFollowCounts = async () => {
@@ -220,14 +217,6 @@ export default function Home() {
         .select('*', { count: 'exact', head: true })
         .eq('follower_id', user.id),
     ]);
-
-    if (followersResult.error) {
-      console.error('BMAX followers load error:', followersResult.error);
-    }
-
-    if (followingResult.error) {
-      console.error('BMAX following load error:', followingResult.error);
-    }
 
     setFollowersCount(followersResult.count || 0);
     setFollowingCount(followingResult.count || 0);
@@ -250,18 +239,14 @@ export default function Home() {
     let profileMap = {};
 
     if (userIds.length > 0) {
-      const { data: profilesData, error: profilesError } = await supabase
+      const { data: profilesData } = await supabase
         .from('profiles')
-        .select('id, username')
+        .select('id, username, avatar_url')
         .in('id', userIds);
 
-      if (profilesError) {
-        console.error('BMAX post profiles load error:', profilesError);
-      } else {
-        profileMap = Object.fromEntries(
-          (profilesData || []).map(profile => [profile.id, profile])
-        );
-      }
+      profileMap = Object.fromEntries(
+        (profilesData || []).map(profile => [profile.id, profile])
+      );
     }
 
     setPosts(
@@ -275,15 +260,10 @@ export default function Home() {
   const fetchUserLikes = async () => {
     if (!user?.id) return;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('likes')
       .select('post_id')
       .eq('user_id', user.id);
-
-    if (error) {
-      console.error('BMAX likes load error:', error);
-      return;
-    }
 
     setUserLikes((data || []).map(row => row.post_id));
   };
@@ -291,17 +271,12 @@ export default function Home() {
   const fetchActivities = async () => {
     if (!user?.id) return;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('reputation_logs')
       .select('id, points, action_type, reference_id, created_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50);
-
-    if (error) {
-      console.error('BMAX activity ledger load error:', error);
-      return;
-    }
 
     setActivities((data || []).map(log => ({
       id: log.id,
@@ -355,31 +330,57 @@ export default function Home() {
 
     const cleanUsername = username.trim();
     const cleanBio = bio.trim();
+    let finalAvatarUrl = avatarUrl;
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .upsert({
-        id: user.id,
-        username: cleanUsername,
-        bio: cleanBio,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'id',
-      })
-      .select('id, username, bio, reputation')
-      .single();
+    try {
+      if (avatarFile) {
+        const fileExt = avatarFile.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const fileName = `${user.id}-${Date.now()}.${fileExt}`;
 
-    if (error) {
-      console.error('BMAX profile update error:', error);
-      alert(`Error updating profile: ${error.message}`);
-      return;
+        const { error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(fileName, avatarFile, { upsert: true, contentType: avatarFile.type });
+
+        if (uploadError) {
+          throw new Error(`Avatar upload failed: ${uploadError.message}`);
+        }
+
+        const { data: urlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(fileName);
+
+        finalAvatarUrl = urlData?.publicUrl || finalAvatarUrl;
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          username: cleanUsername,
+          bio: cleanBio,
+          avatar_url: finalAvatarUrl,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'id',
+        })
+        .select('id, username, bio, reputation, avatar_url')
+        .single();
+
+      if (error) {
+        throw new Error(`Error updating profile: ${error.message}`);
+      }
+
+      setUsername(data?.username || '');
+      setBio(data?.bio || '');
+      setReputation(Number(data?.reputation) || 0);
+      setAvatarUrl(data?.avatar_url || '');
+      setAvatarFile(null);
+      setIsEditingProfile(false);
+      alert('Profile updated successfully!');
+    } catch (err) {
+      console.error('BMAX profile update error:', err);
+      alert(err.message);
     }
-
-    setUsername(data?.username || '');
-    setBio(data?.bio || '');
-    setReputation(Number(data?.reputation) || 0);
-    setIsEditingProfile(false);
-    alert('Profile updated successfully!');
   };
 
   const handleCreatePost = async (e) => {
@@ -400,7 +401,6 @@ export default function Home() {
     try {
       let mediaUrl = null;
 
-      // Upload media first. Never create a post if the upload failed.
       if (mediaFile) {
         const fileExt = mediaFile.name.split('.').pop()?.toLowerCase() || 'bin';
         const fileName = `${user.id}/${crypto.randomUUID()}.${fileExt}`;
@@ -414,7 +414,6 @@ export default function Home() {
           });
 
         if (uploadError) {
-          console.error('BMAX media upload error:', uploadError);
           throw new Error(`Media upload failed: ${uploadError.message}`);
         }
 
@@ -423,14 +422,8 @@ export default function Home() {
           .getPublicUrl(filePath);
 
         mediaUrl = urlData?.publicUrl || null;
-
-        if (!mediaUrl) {
-          throw new Error('Media uploaded, but no public media URL was returned.');
-        }
       }
 
-      // The database trigger awards +1 Rep after this insert.
-      // Do NOT insert into reputation_logs from the client.
       const { error: postError } = await supabase
         .from('posts')
         .insert({
@@ -442,11 +435,9 @@ export default function Home() {
         });
 
       if (postError) {
-        console.error('BMAX post insert error:', postError);
         throw new Error(`Could not publish broadcast: ${postError.message}`);
       }
 
-      // Reload the authoritative database state.
       await Promise.all([
         fetchPosts(),
         fetchUserProfile(),
@@ -490,47 +481,18 @@ export default function Home() {
     const isLiked = userLikes.includes(postId);
 
     if (isLiked) {
-      const { error } = await supabase
-        .from('likes')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('post_id', postId);
-
-      if (error) {
-        console.error('BMAX unlike error:', error);
-        alert(`Could not remove like: ${error.message}`);
-        return;
-      }
-
+      await supabase.from('likes').delete().eq('user_id', user.id).eq('post_id', postId);
       setUserLikes(prev => prev.filter(id => id !== postId));
     } else {
-      const { error } = await supabase
-        .from('likes')
-        .insert({
-          user_id: user.id,
-          post_id: postId,
-        });
-
-      if (error) {
-        console.error('BMAX like error:', error);
-        alert(`Could not like post: ${error.message}`);
-        return;
-      }
-
+      await supabase.from('likes').insert({ user_id: user.id, post_id: postId });
       setUserLikes(prev => [...prev, postId]);
     }
 
-    // PostgreSQL handles reputation rewards through the likes trigger.
-    await Promise.all([
-      fetchPosts(),
-      fetchUserProfile(),
-      fetchActivities(),
-    ]);
+    await Promise.all([fetchPosts(), fetchUserProfile(), fetchActivities()]);
   };
 
   const handleSignIn = async (e) => {
     e.preventDefault();
-
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
@@ -539,13 +501,9 @@ export default function Home() {
       return;
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: cleanEmail,
-      password,
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
 
     if (error) {
-      console.error('BMAX sign-in error:', error);
       setAuthMessage(error.message);
       setAuthMessageType('error');
       return;
@@ -557,7 +515,6 @@ export default function Home() {
 
   const handleSignUp = async (e) => {
     e.preventDefault();
-
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
@@ -566,38 +523,20 @@ export default function Home() {
       return;
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-    });
+    const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
 
     if (error) {
-      console.error('BMAX sign-up error:', error);
       setAuthMessage(error.message);
       setAuthMessageType('error');
       return;
     }
 
     if (data?.user && data?.session) {
-      // Only initialize the profile from the browser when a real authenticated
-      // session exists. If email confirmation is enabled, fetchUserProfile()
-      // creates the profile after the user signs in.
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: data.user.id,
-          username: cleanEmail.split('@')[0],
-          reputation: 0,
-        }, {
-          onConflict: 'id',
-        });
-
-      if (profileError) {
-        console.error('BMAX profile initialization error:', profileError);
-        setAuthMessage(`Account created, but profile setup failed: ${profileError.message}`);
-        setAuthMessageType('error');
-        return;
-      }
+      await supabase.from('profiles').upsert({
+        id: data.user.id,
+        username: cleanEmail.split('@')[0],
+        reputation: 0,
+      }, { onConflict: 'id' });
 
       setUsername(cleanEmail.split('@')[0]);
       setBio('');
@@ -606,8 +545,8 @@ export default function Home() {
 
     setAuthMessage(
       data?.session
-        ? 'Account created and signed in. Reputation starts at 0 PTS.'
-        : 'Account created. Check your email if confirmation is required, then sign in. Your BMAX profile will initialize automatically.'
+        ? 'Account created and signed in.'
+        : 'Account created. Check your email if confirmation is required.'
     );
     setAuthMessageType('success');
   };
@@ -638,7 +577,7 @@ export default function Home() {
         }
       `}</style>
 
-      {/* ELITE PROFESSIONAL HEADER */}
+      {/* HEADER */}
       <header style={styles.header}>
         <div style={styles.brandGroup}>
           <h1 style={styles.logo}>BMAX</h1>
@@ -661,7 +600,7 @@ export default function Home() {
         </nav>
       </header>
 
-      {/* MAIN VIEW CONTROLLER */}
+      {/* MAIN VIEW */}
       <div style={styles.layoutContainer} className="responsive-grid">
         {activeTab === 'discover' ? (
           <main style={{ gridColumn: '1 / -1', maxWidth: '900px', margin: '0 auto', width: '100%' }}>
@@ -681,7 +620,14 @@ export default function Home() {
                 {filteredPosts.map((post) => (
                   <div key={post.id} style={styles.postCard}>
                     <div style={styles.postHeader}>
-                      <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {post.profiles?.avatar_url ? (
+                          <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} />
+                        ) : (
+                          <div style={styles.feedAvatar}>👤</div>
+                        )}
+                        <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
+                      </div>
                       <span style={styles.postType}>{post.post_type}</span>
                     </div>
                     <p style={styles.postContent}>{post.caption}</p>
@@ -755,7 +701,11 @@ export default function Home() {
           <main style={{ gridColumn: '1 / -1', maxWidth: '700px', margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={styles.card}>
               <div style={styles.profileHeader}>
-                <div style={styles.avatar}>👤</div>
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" style={styles.avatarImg} />
+                ) : (
+                  <div style={styles.avatar}>👤</div>
+                )}
                 <div style={{ flex: 1 }}>
                   <h2 style={{ margin: 0, color: '#f8fafc', fontSize: '20px' }}>@{username || user?.email || 'builder'}</h2>
                   <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 12px 0' }}>{bio || 'No bio configured yet.'}</p>
@@ -787,6 +737,10 @@ export default function Home() {
                     onChange={(e) => setBio(e.target.value)}
                     style={{ ...styles.textArea, minHeight: '60px' }}
                   />
+                  <label style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    Profile Photo (500x500 recommended):
+                    <input type="file" accept="image/*" onChange={(e) => setAvatarFile(e.target.files[0])} style={styles.input} />
+                  </label>
                   <button onClick={handleSaveProfile} style={{ ...styles.primaryBtn, marginTop: '8px' }}>Save Profile</button>
                 </div>
               )}
@@ -895,10 +849,9 @@ export default function Home() {
             </div>
           </main>
         ) : (
-          /* PREMIUM INSTAGRAM-KILLER HOME FEED */
+          /* HOME FEED */
           <>
             <main style={styles.feedColumn}>
-              {/* IMMERSIVE FEED TABS */}
               <div style={styles.filterRow}>
                 {['for you', 'following', 'trending', 'code & tech', 'ai labs', 'design'].map((filter) => (
                   <button
@@ -911,12 +864,11 @@ export default function Home() {
                 ))}
               </div>
 
-              {/* STREAM POSTS */}
               <div style={styles.streamContainer}>
                 {posts.length === 0 ? (
                   <div style={{ ...styles.card, textAlign: 'center', padding: '40px', color: '#64748b' }}>
                     <p style={{ fontSize: '15px', color: '#94a3b8' }}>No global broadcasts found yet.</p>
-                    <p style={{ fontSize: '13px' }}>Switch to your <strong>Profile tab</strong> to publish the first network update and kick off your reputation score from zero to infinite!</p>
+                    <p style={{ fontSize: '13px' }}>Switch to your <strong>Profile tab</strong> to publish the first network update!</p>
                   </div>
                 ) : (
                   posts.map((post) => {
@@ -925,7 +877,11 @@ export default function Home() {
                       <div key={post.id} style={styles.postCard}>
                         <div style={styles.postHeader}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div style={styles.feedAvatar}>👤</div>
+                            {post.profiles?.avatar_url ? (
+                              <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} />
+                            ) : (
+                              <div style={styles.feedAvatar}>👤</div>
+                            )}
                             <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
                           </div>
                           <span style={styles.postType}>{post.post_type}</span>
@@ -957,7 +913,6 @@ export default function Home() {
               </div>
             </main>
 
-            {/* SIDEBAR WIDGETS */}
             <aside style={styles.sidebarColumn}>
               <div style={styles.card}>
                 <div style={styles.repHeader}>
@@ -1064,6 +1019,7 @@ const styles = {
   streamContainer: { display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' },
   postHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   feedAvatar: { width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#1e1b4b', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '14px' },
+  feedAvatarImg: { width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' },
   username: { color: '#c084fc', fontWeight: 'bold', fontSize: '14px' },
   postType: { fontSize: '10px', backgroundColor: '#120b24', border: '1px solid #1e1b4b', padding: '3px 8px', borderRadius: '6px', color: '#e879f9', textTransform: 'uppercase', fontWeight: 'bold' },
   postContent: { margin: '0 0 14px 0', lineHeight: '1.5', wordBreak: 'break-word', fontSize: '15px' },
@@ -1080,6 +1036,7 @@ const styles = {
   successBox: { backgroundColor: '#052e16', color: '#bbf7d0', padding: '8px', borderRadius: '6px', fontSize: '12px', marginBottom: '10px' },
   profileHeader: { display: 'flex', gap: '20px', alignItems: 'center' },
   avatar: { width: '70px', height: '70px', borderRadius: '50%', backgroundColor: '#1e1b4b', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '28px' },
+  avatarImg: { width: '70px', height: '70px', borderRadius: '50%', objectFit: 'cover' },
   profileStatsRow: { display: 'flex', gap: '20px', fontSize: '14px' },
   profileActions: { display: 'flex', gap: '8px', marginTop: '16px' },
   editSection: { marginTop: '16px', borderTop: '1px solid #1e1b4b', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' },
