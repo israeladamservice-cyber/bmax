@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://qtjehqjnazsxvdzqtkgh.supabase.co';
-const supabaseAnonKey = 'sb_publishable_sqVY-eC8omT648v-K5hiUw_u03LW-3r';
+// Updated with your BMAX Supabase Project credentials
+const supabaseUrl = 'https://kmqkqdzzmyzkoltxnnqt.supabase.co';
+const supabaseAnonKey = 'sb_publishable_tHE9rIwNAsYile9BPJwCBA_pMGRyI5S';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function Home() {
@@ -156,7 +157,13 @@ export default function Home() {
 
   const handleSignUp = async (e) => {
     e.preventDefault();
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : 'https://bmax-o.vercel.app',
+      },
+    });
     if (error) {
       setAuthMessage(error.message);
       setAuthMessageType('error');
@@ -170,7 +177,7 @@ export default function Home() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : 'https://bmax-o.vercel.app',
       },
     });
 
