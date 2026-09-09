@@ -231,7 +231,7 @@ export default function Home() {
       setPostText('');
       clearMediaPreview();
       setPosts([data, ...posts]);
-      if (activeTab === 'create') setActiveTab('home');
+      alert('Broadcast published!');
     }
   };
 
@@ -295,7 +295,6 @@ export default function Home() {
     setChatInput('');
   };
 
-  // Filtered posts for home and discover pages
   const filteredPosts = posts.filter(post => {
     if (discoverSearch.trim() === '') return true;
     return post.caption?.toLowerCase().includes(discoverSearch.toLowerCase());
@@ -303,13 +302,29 @@ export default function Home() {
 
   return (
     <div style={styles.appWrapper}>
+      {/* GLOBAL RESPONSIVE STYLES */}
+      <style>{`
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; background-color: #07040d; }
+        
+        .desktop-only { display: flex; }
+        .mobile-only { display: none; }
+        
+        @media (max-width: 768px) {
+          .desktop-only { display: none !important; }
+          .mobile-only { display: flex !important; }
+          .responsive-grid { grid-template-columns: 1fr !important; }
+          .community-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
       {/* HEADER */}
       <header style={styles.header}>
         <div style={styles.brandGroup}>
           <h1 style={styles.logo}>BMAX</h1>
           <span style={styles.badge}>PRO v2.5</span>
         </div>
-        <nav style={styles.topNav}>
+        <nav style={styles.topNav} className="desktop-only">
           {['home', 'discover', 'create', 'messages', 'profile'].map((tab) => (
             <button
               key={tab}
@@ -327,7 +342,7 @@ export default function Home() {
       </header>
 
       {/* MAIN LAYOUT */}
-      <div style={styles.layoutContainer}>
+      <div style={styles.layoutContainer} className="responsive-grid">
         {/* DISCOVER VIEW */}
         {activeTab === 'discover' ? (
           <main style={{ gridColumn: '1 / -1', maxWidth: '900px', margin: '0 auto', width: '100%' }}>
@@ -337,8 +352,7 @@ export default function Home() {
                 Search for broadcasts, explore trending topics, and uncover active communities.
               </p>
 
-              {/* SEARCH & FILTERS */}
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+              <div style={styles.discoverFilterGroup}>
                 <input
                   type="text"
                   placeholder="🔍 Search posts, tags, or topics..."
@@ -358,7 +372,6 @@ export default function Home() {
                 </select>
               </div>
 
-              {/* DISCOVERED POSTS STREAM */}
               <h3 style={{ fontSize: '16px', color: '#f8fafc', marginBottom: '12px' }}>Broadcast Results</h3>
               <div style={styles.streamContainer}>
                 {filteredPosts.length === 0 ? (
@@ -403,7 +416,6 @@ export default function Home() {
                 Build an ecosystem around your ideas. Launch a dedicated space for builders and creators.
               </p>
 
-              {/* CREATE COMMUNITY FORM */}
               <form onSubmit={handleCreateCommunity} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}>
                 <input
                   type="text"
@@ -418,7 +430,7 @@ export default function Home() {
                   onChange={(e) => setCommunityDesc(e.target.value)}
                   style={{ ...styles.textArea, minHeight: '70px' }}
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={styles.formActionRow}>
                   <select
                     value={communityTag}
                     onChange={(e) => setCommunityTag(e.target.value)}
@@ -433,9 +445,8 @@ export default function Home() {
                 </div>
               </form>
 
-              {/* EXISTING COMMUNITIES LIST */}
               <h3 style={{ fontSize: '15px', color: '#f8fafc', margin: '16px 0 12px 0' }}>Explore Active Hubs</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px' }}>
+              <div style={styles.communityGrid} className="community-grid">
                 {communities.map(comm => (
                   <div key={comm.id} style={{ backgroundColor: '#0f0a1c', border: '1px solid #2e1065', borderRadius: '8px', padding: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -455,8 +466,8 @@ export default function Home() {
             </div>
           </main>
         ) : activeTab === 'profile' ? (
-          /* PROFILE PAGE VIEW */
-          <main style={{ gridColumn: '1 / -1', maxWidth: '700px', margin: '0 auto', width: '100%' }}>
+          /* PROFILE PAGE VIEW WITH BROADCAST COMPOSER MOVED HERE */
+          <main style={{ gridColumn: '1 / -1', maxWidth: '700px', margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={styles.card}>
               <div style={styles.profileHeader}>
                 <div style={styles.avatar}>👤</div>
@@ -483,7 +494,6 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* EDIT PROFILE FORM */}
               {isEditingProfile && (
                 <div style={styles.editSection}>
                   <h4 style={{ margin: '0 0 8px 0', color: '#f8fafc' }}>Edit Profile</h4>
@@ -509,6 +519,59 @@ export default function Home() {
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* MOVED BROADCAST / COMPOSER WIDGET TO PROFILE */}
+            <div style={styles.card}>
+              <h3 style={{ margin: '0 0 12px 0', color: '#a855f7', fontSize: '16px' }}>📡 Create a Broadcast</h3>
+              <div style={styles.composerTabs}>
+                {['update', 'code block', 'poll'].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setComposerType(type)}
+                    style={composerType === type ? styles.activeChip : styles.chip}
+                  >
+                    {type === 'update' ? '📌 Update' : type === 'code block' ? '‹/› Code Block' : '📊 Poll'}
+                  </button>
+                ))}
+              </div>
+
+              <form onSubmit={handleCreatePost} style={styles.composerForm}>
+                <textarea
+                  value={postText}
+                  onChange={(e) => setPostText(e.target.value)}
+                  placeholder="What are you building or creating?"
+                  style={styles.textArea}
+                />
+
+                {mediaPreview && (
+                  <div style={styles.previewContainer}>
+                    {mediaType === 'image' ? (
+                      <img src={mediaPreview} alt="Preview" style={styles.mediaPreview} />
+                    ) : (
+                      <video src={mediaPreview} controls style={styles.mediaPreview} />
+                    )}
+                    <button type="button" onClick={clearMediaPreview} style={styles.removeMediaBtn}>✕</button>
+                  </div>
+                )}
+
+                <div style={styles.composerFooter}>
+                  <div style={styles.iconGroup}>
+                    <label style={styles.iconBtn}>
+                      📷 / 🎥
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleMediaSelect}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  </div>
+                  <button type="submit" disabled={uploading} style={styles.broadcastBtn}>
+                    {uploading ? 'Publishing...' : '📡 Broadcast'}
+                  </button>
+                </div>
+              </form>
             </div>
           </main>
         ) : activeTab === 'messages' ? (
@@ -540,7 +603,6 @@ export default function Home() {
                   ))}
                 </div>
               ) : activeChat ? (
-                /* CHAT HISTORY & INPUT */
                 <div style={{ display: 'flex', flexDirection: 'column', height: '400px' }}>
                   <button onClick={() => setActiveChat(null)} style={{ ...styles.actionBtn, marginBottom: '8px' }}>
                     ← Back to Chats
@@ -577,7 +639,6 @@ export default function Home() {
                   </div>
                 </div>
               ) : (
-                /* CONVERSATION LIST */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {conversations.map(conv => (
                     <div
@@ -609,59 +670,6 @@ export default function Home() {
                 <p style={styles.subtext}>Earn points by creating, helping, & collaborating with builders.</p>
               </div>
 
-              {/* COMPOSER WIDGET */}
-              <div style={styles.card}>
-                <div style={styles.composerTabs}>
-                  {['update', 'code block', 'poll'].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setComposerType(type)}
-                      style={composerType === type ? styles.activeChip : styles.chip}
-                    >
-                      {type === 'update' ? '📌 Update' : type === 'code block' ? '‹/› Code Block' : '📊 Poll'}
-                    </button>
-                  ))}
-                </div>
-
-                <form onSubmit={handleCreatePost} style={styles.composerForm}>
-                  <textarea
-                    value={postText}
-                    onChange={(e) => setPostText(e.target.value)}
-                    placeholder="What are you building or creating?"
-                    style={styles.textArea}
-                  />
-
-                  {/* MEDIA PREVIEW */}
-                  {mediaPreview && (
-                    <div style={styles.previewContainer}>
-                      {mediaType === 'image' ? (
-                        <img src={mediaPreview} alt="Preview" style={styles.mediaPreview} />
-                      ) : (
-                        <video src={mediaPreview} controls style={styles.mediaPreview} />
-                      )}
-                      <button type="button" onClick={clearMediaPreview} style={styles.removeMediaBtn}>✕</button>
-                    </div>
-                  )}
-
-                  <div style={styles.composerFooter}>
-                    <div style={styles.iconGroup}>
-                      <label style={styles.iconBtn}>
-                        📷 / 🎥
-                        <input
-                          type="file"
-                          accept="image/*,video/*"
-                          onChange={handleMediaSelect}
-                          style={{ display: 'none' }}
-                        />
-                      </label>
-                    </div>
-                    <button type="submit" disabled={uploading} style={styles.broadcastBtn}>
-                      {uploading ? 'Publishing...' : '📡 Broadcast'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-
               {/* FEED CATEGORIES */}
               <div style={styles.filterRow}>
                 {['for you', 'following', 'trending', 'learning', 'projects', 'local'].map((filter) => (
@@ -675,11 +683,11 @@ export default function Home() {
                 ))}
               </div>
 
-              {/* FEED STREAM (SHOWING REAL USER POSTS) */}
+              {/* FEED STREAM */}
               <div style={styles.streamContainer}>
                 {posts.length === 0 ? (
                   <div style={{ ...styles.card, textAlign: 'center', color: '#64748b' }}>
-                    <p>No user posts yet. Be the first to share something above!</p>
+                    <p>No posts yet. Visit your profile to broadcast a new update!</p>
                   </div>
                 ) : (
                   posts.map((post) => {
@@ -809,8 +817,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* MOBILE NAVIGATION */}
-      <nav style={styles.mobileNav}>
+      {/* MOBILE BOTTOM NAVIGATION */}
+      <nav style={styles.mobileNav} className="mobile-only">
         {['home', 'discover', 'create', 'messages', 'profile'].map((tab) => (
           <button
             key={tab}
@@ -835,7 +843,7 @@ const styles = {
     color: '#f8fafc',
     minHeight: '100vh',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    paddingBottom: '60px',
+    paddingBottom: '70px',
   },
   header: {
     display: 'flex',
@@ -847,26 +855,27 @@ const styles = {
     position: 'sticky',
     top: 0,
     zIndex: 100,
+    width: '100%',
   },
   brandGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
   logo: { margin: 0, fontSize: '22px', fontWeight: '900', letterSpacing: '2px', color: '#a855f7' },
   badge: { backgroundColor: '#7e22ce', fontSize: '10px', padding: '2px 6px', borderRadius: '8px', color: '#f8fafc' },
-  topNav: { display: 'flex', gap: '8px' },
+  topNav: { gap: '8px' },
   navBtn: { backgroundColor: 'transparent', border: 'none', color: '#94a3b8', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' },
   activeNavBtn: { backgroundColor: '#2e1065', border: '1px solid #7e22ce', color: '#f59e0b', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
-  layoutContainer: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: '20px', maxWidth: '1000px', margin: '0 auto', padding: '20px 16px' },
-  feedColumn: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  sidebarColumn: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  card: { backgroundColor: '#0f0a1c', border: '1px solid #2e1065', borderRadius: '12px', padding: '16px' },
+  layoutContainer: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: '20px', maxWidth: '1000px', margin: '0 auto', padding: '20px 16px', width: '100%' },
+  feedColumn: { display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' },
+  sidebarColumn: { display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' },
+  card: { backgroundColor: '#0f0a1c', border: '1px solid #2e1065', borderRadius: '12px', padding: '16px', width: '100%' },
   repHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
   repTitle: { fontWeight: 'bold', color: '#f8fafc' },
   repValue: { fontWeight: 'bold', color: '#f59e0b' },
   subtext: { margin: 0, fontSize: '12px', color: '#94a3b8' },
-  composerTabs: { display: 'flex', gap: '8px', marginBottom: '12px' },
+  composerTabs: { display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' },
   chip: { backgroundColor: '#1e1b4b', color: '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer' },
   activeChip: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' },
   composerForm: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  textArea: { backgroundColor: '#07040d', border: '1px solid #2e1065', borderRadius: '8px', color: '#fff', padding: '10px', minHeight: '80px', resize: 'vertical', fontFamily: 'inherit' },
+  textArea: { backgroundColor: '#07040d', border: '1px solid #2e1065', borderRadius: '8px', color: '#fff', padding: '10px', minHeight: '80px', resize: 'vertical', fontFamily: 'inherit', width: '100%' },
   previewContainer: { position: 'relative', width: '100%', maxHeight: '250px', overflow: 'hidden', borderRadius: '8px', backgroundColor: '#000' },
   mediaPreview: { width: '100%', height: '100%', objectFit: 'contain' },
   removeMediaBtn: { position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer' },
@@ -874,33 +883,33 @@ const styles = {
   iconGroup: { display: 'flex', gap: '6px' },
   iconBtn: { backgroundColor: '#1e1b4b', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', color: '#fff', fontSize: '12px' },
   broadcastBtn: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' },
-  filterRow: { display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' },
+  filterRow: { display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px', maxWidth: '100%' },
   filterChip: { backgroundColor: '#0f0a1c', color: '#64748b', border: '1px solid #2e1065', padding: '6px 12px', borderRadius: '12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap', textTransform: 'capitalize' },
   activeFilterChip: { backgroundColor: '#2e1065', color: '#f59e0b', border: '1px solid #f59e0b', padding: '6px 12px', borderRadius: '12px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 'bold', textTransform: 'capitalize' },
-  streamContainer: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  streamContainer: { display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' },
   postHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: '8px' },
   username: { color: '#a855f7', fontWeight: 'bold' },
   postType: { fontSize: '10px', backgroundColor: '#2e1065', padding: '2px 6px', borderRadius: '4px', color: '#d8b4fe', textTransform: 'uppercase' },
-  postContent: { margin: '0 0 12px 0', lineHeight: '1.4' },
+  postContent: { margin: '0 0 12px 0', lineHeight: '1.4', wordBreak: 'break-word' },
   postMedia: { width: '100%', borderRadius: '8px', maxHeight: '350px', objectFit: 'cover' },
   postActions: { display: 'flex', gap: '12px', borderTop: '1px solid #2e1065', paddingTop: '8px' },
   actionBtn: { backgroundColor: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '12px' },
   sidebarTitle: { margin: '0 0 12px 0', fontSize: '14px', color: '#f8fafc' },
   authForm: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  input: { backgroundColor: '#07040d', border: '1px solid #2e1065', color: '#fff', padding: '8px', borderRadius: '6px', fontSize: '12px' },
+  input: { backgroundColor: '#07040d', border: '1px solid #2e1065', color: '#fff', padding: '8px', borderRadius: '6px', fontSize: '12px', width: '100%' },
   primaryBtn: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
   secondaryBtn: { backgroundColor: '#1e1b4b', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' },
   dangerBtn: { backgroundColor: '#ef4444', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' },
   errorBox: { backgroundColor: '#450a0a', color: '#fecaca', padding: '6px', borderRadius: '4px', fontSize: '11px', marginBottom: '8px' },
   successBox: { backgroundColor: '#052e16', color: '#bbf7d0', padding: '6px', borderRadius: '4px', fontSize: '11px', marginBottom: '8px' },
-  profileHeader: { display: 'flex', gap: '16px', alignItems: 'center' },
-  avatar: { width: '60px', height: '60px', borderRadius: '50%', backgroundColor: '#2e1065', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px' },
-  profileStatsRow: { display: 'flex', gap: '16px', fontSize: '14px' },
+  profileHeader: { display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' },
+  avatar: { width: '60px', height: '60px', borderRadius: '50%', backgroundColor: '#2e1065', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '24px', flexShrink: 0 },
+  profileStatsRow: { display: 'flex', gap: '16px', fontSize: '14px', flexWrap: 'wrap' },
   profileActions: { display: 'flex', gap: '8px', marginTop: '16px' },
   editSection: { marginTop: '16px', borderTop: '1px solid #2e1065', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' },
-  settingsFab: { position: 'fixed', bottom: '70px', right: '20px', width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#2e1065', border: '1px solid #a855f7', color: '#f59e0b', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px', cursor: 'pointer', zIndex: 99 },
-  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-  modalContent: { backgroundColor: '#0f0a1c', border: '1px solid #2e1065', borderRadius: '12px', padding: '20px', width: '90%', maxWidth: '400px' },
+  settingsFab: { position: 'fixed', bottom: '80px', right: '20px', width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#2e1065', border: '1px solid #a855f7', color: '#f59e0b', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px', cursor: 'pointer', zIndex: 99 },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '16px' },
+  modalContent: { backgroundColor: '#0f0a1c', border: '1px solid #2e1065', borderRadius: '12px', padding: '20px', width: '100%', maxWidth: '400px' },
   settingItem: { display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #2e1065', fontSize: '13px', cursor: 'pointer' },
   subTabHeader: { display: 'flex', gap: '8px', borderBottom: '1px solid #2e1065', paddingBottom: '8px', marginBottom: '12px' },
   subTab: { backgroundColor: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '13px' },
@@ -908,7 +917,10 @@ const styles = {
   activityCard: { backgroundColor: '#07040d', border: '1px solid #2e1065', padding: '10px', borderRadius: '6px', fontSize: '13px' },
   conversationCard: { backgroundColor: '#07040d', border: '1px solid #2e1065', padding: '12px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
   unreadBadge: { backgroundColor: '#7e22ce', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '8px' },
-  mobileNav: { position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#0f0a1c', borderTop: '1px solid #2e1065', display: 'flex', justifyContent: 'space-around', padding: '8px 0', zIndex: 100 },
-  mobileBtn: { backgroundColor: 'transparent', border: 'none', fontSize: '18px' },
-  activeMobileBtn: { backgroundColor: 'transparent', border: 'none', fontSize: '18px' }
+  mobileNav: { position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#0f0a1c', borderTop: '1px solid #2e1065', justifyContent: 'space-around', padding: '10px 0', zIndex: 100 },
+  mobileBtn: { backgroundColor: 'transparent', border: 'none', fontSize: '20px', padding: '4px 12px' },
+  activeMobileBtn: { backgroundColor: '#2e1065', border: 'none', fontSize: '20px', borderRadius: '8px', padding: '4px 12px' },
+  discoverFilterGroup: { display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' },
+  formActionRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' },
+  communityGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '12px' }
 };
