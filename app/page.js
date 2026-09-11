@@ -276,7 +276,7 @@ styles.activeNavBtn : styles.navBtn}>{icon} {label}</button>)}</nav>
   ■{unreadCount > 0 && (
     <span style={styles.notificationDot}>{unreadCount}</span>
   )}
-</button> {user && <button onClick={handleSignOut} style={styles.secondaryBtn}>Sign Out</button>}
+</button>
  </div>
  </header>
  <div style={styles.mobileNav}>{navItems.map(([tab, icon, label]) => <button key={tab} onClick={() => setActiveTab(tab)} style={activeTab === tab ? styles.mobileNavActive :
