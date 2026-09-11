@@ -472,21 +472,31 @@ export default function Home() {
         button { transition: transform .15s ease, opacity .15s ease, border-color .15s ease, background .15s ease; }
         button:active { transform: translateY(1px); }
         button:disabled { opacity: .55; cursor: not-allowed; }
-        .desktop-only { display: flex; } .mobile-only { display: none; }
         .author-link { cursor: pointer; transition: opacity 0.2s; } .author-link:hover { opacity: 0.8; text-decoration: underline; }
         ::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: #3b0764; border-radius: 10px; }
-        @media (max-width: 900px) { .topicGrid,.hubGrid,.createGrid { grid-template-columns: 1fr !important; } .headerSearch { display:none !important; } .statsGrid { grid-template-columns: repeat(2,1fr) !important; } }
-        @media (max-width: 768px) { .desktop-only { display: none !important; } .mobile-only { display: flex !important; } .responsive-grid { grid-template-columns: 1fr !important; } .desktopNav { display:none !important; } }
+        
+        @media (max-width: 900px) {
+          .topicGrid, .hubGrid, .createGrid { grid-template-columns: 1fr !important; }
+          .statsGrid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+        
+        @media (max-width: 768px) {
+          .responsive-grid { grid-template-columns: 1fr !important; }
+          .desktopNav { display: none !important; }
+          .mobileNav { display: flex !important; }
+          .headerSearch { display: none !important; }
+          .appHeader { padding: 10px 14px !important; }
+        }
       `}</style>
 
-      <header style={styles.header}>
+      <header style={styles.header} className="appHeader">
         <button onClick={() => setActiveTab('home')} style={styles.brandButton}>
           <div style={styles.brandGroup}>
             <h1 style={styles.logo}>BMAX</h1>
             <span style={styles.badge}>GLOBAL v2.7</span>
           </div>
         </button>
-        <form onSubmit={handleSearchSubmit} style={styles.headerSearch}>
+        <form onSubmit={handleSearchSubmit} style={styles.headerSearch} className="headerSearch">
           <span>■</span>
           <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search BMAX" style={styles.headerSearchInput} />
         </form>
@@ -511,7 +521,7 @@ export default function Home() {
         </div>
       </header>
 
-      <div style={styles.mobileNav}>
+      <div style={styles.mobileNav} className="mobileNav">
         {navItems.map(([tab, icon, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={activeTab === tab ? styles.mobileNavActive : styles.mobileNavBtn}>
             <span>{icon}</span>
@@ -584,7 +594,7 @@ export default function Home() {
                 </div>
                 <button onClick={() => setIsEditingProfile(!isEditingProfile)} style={styles.primaryBtn}>{isEditingProfile ? 'Close Edit' : 'Edit Profile'}</button>
               </div>
-              <div style={styles.statsGrid}>
+              <div style={styles.statsGrid} className="statsGrid">
                 <div><strong>{reputation.toLocaleString()}</strong><span>Reputation</span></div>
                 <div><strong>{followersCount}</strong><span>Followers</span></div>
                 <div><strong>{followingCount}</strong><span>Following</span></div>
@@ -725,7 +735,7 @@ export default function Home() {
                 <EmptyState icon="■" title="No broadcasts yet" text="Be one of the first builders to publish something on BMAX." />
               )}
             </main>
-            <aside style={styles.sidebarColumn} className="desktop-only">
+            <aside style={styles.sidebarColumn}>
               <div style={styles.card}>
                 <h3 style={styles.sidebarTitle}>Your Reputation</h3>
                 <div style={styles.repNumber}>{reputation.toLocaleString()}</div>
