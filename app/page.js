@@ -508,6 +508,21 @@ export default function Home() {
           ))}
         </nav>
         <div style={styles.headerRight}>
+          {/* APK Download Button */}
+          <a
+            href="/my-app.apk"
+            download="BMAX.apk"
+            style={{
+              ...styles.primaryBtn,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              textDecoration: 'none',
+            }}
+          >
+            <span>■</span> App (.APK)
+          </a>
+
           <button
             onClick={() => {
               markNotificationsRead();
