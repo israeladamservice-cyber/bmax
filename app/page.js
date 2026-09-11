@@ -89,6 +89,22 @@ export default function Home() {
     window.__bmaxToastTimer = window.setTimeout(() => setToast(''), 2500);
   };
 
+  // Fetch posts from Supabase database
+  const fetchPosts = async () => {
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*, profiles(username, avatar_url)')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      setPosts(data);
+    }
+  };
+
+  useEffect(() => {
+    fetchPosts();
+  }, []);
+
   const markNotificationsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
@@ -158,20 +174,33 @@ export default function Home() {
     }
   };
 
-  const handleCreatePost = (e) => {
+  // Create post directly in Supabase
+  const handleCreatePost = async (e) => {
     e.preventDefault();
     if (!postText.trim()) return;
     setUploading(true);
-    const newPost = {
-      id: Date.now().toString(),
-      user_id: user?.id,
-      caption: postText,
-      profiles: { username: username || 'builder', avatar_url: avatarUrl },
-      post_type: composerType,
-      media_url: mediaPreview,
-      media_type: mediaType
-    };
-    setPosts([newPost, ...posts]);
+
+    const { data, error } = await supabase
+      .from('posts')
+      .insert([
+        {
+          user_id: user?.id,
+          caption: postText,
+          post_type: composerType,
+          media_url: mediaPreview,
+          media_type: mediaType
+        }
+      ])
+      .select('*, profiles(username, avatar_url)')
+      .single();
+
+    if (error) {
+      showToast('Failed to create post');
+      setUploading(false);
+      return;
+    }
+
+    setPosts([data, ...posts]);
     setPostText('');
     clearMediaPreview();
     setUploading(false);
@@ -183,13 +212,35 @@ export default function Home() {
     setEditCaption(post.caption);
   };
 
-  const handleSaveEdit = (postId) => {
+  // Update post in Supabase
+  const handleSaveEdit = async (postId) => {
+    const { error } = await supabase
+      .from('posts')
+      .update({ caption: editCaption })
+      .eq('id', postId);
+
+    if (error) {
+      showToast('Failed to update post');
+      return;
+    }
+
     setPosts(posts.map(p => p.id === postId ? { ...p, caption: editCaption } : p));
     setEditingPostId(null);
     showToast('Broadcast updated');
   };
 
-  const handleDeletePost = (postId) => {
+  // Delete post from Supabase
+  const handleDeletePost = async (postId) => {
+    const { error } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', postId);
+
+    if (error) {
+      showToast('Failed to delete post');
+      return;
+    }
+
     setPosts(posts.filter(p => p.id !== postId));
     showToast('Broadcast deleted');
   };
@@ -510,8 +561,8 @@ export default function Home() {
         <div style={styles.headerRight}>
           {/* APK Download Button */}
           <a
-            href="/app-release.apk"
-            download="app-release.apk"
+            href="/my-app.apk"
+            download="BMAX.apk"
             style={{
               ...styles.primaryBtn,
               display: 'inline-flex',
