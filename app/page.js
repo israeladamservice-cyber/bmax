@@ -172,15 +172,62 @@ export default function Home() {
     }
   };
 
-  const uploadToR2 = async (file, userId) => {
-    const MAX_IMAGE = 25 * 1024 * 1024;
-    const MAX_VIDEO = 100 * 1024 * 1024;
-    if (file.type.startsWith('image/') && file.size > MAX_IMAGE) {
-      throw new Error('Images must be 25MB or smaller.');
-    }
-    if (file.type.startsWith('video/') && file.size > MAX_VIDEO) {
-      throw new Error('Videos must be 100MB or smaller.');
-    }
+ // ImageKit upload helper - media is stored in ImageKit, URL is stored in Supabase
+const uploadToImageKit = async (file, userId) => {
+  if (!file) return null;
+  if (!userId) throw new Error('You must be signed in to upload media.');
+
+  const MAX_IMAGE = 25 * 1024 * 1024;
+  const MAX_VIDEO = 100 * 1024 * 1024;
+
+  if (file.type.startsWith('image/') && file.size > MAX_IMAGE) {
+    throw new Error('Images must be 25MB or smaller.');
+  }
+  if (file.type.startsWith('video/') && file.size > MAX_VIDEO) {
+    throw new Error('Videos must be 100MB or smaller.');
+  }
+
+  const authResponse = await fetch('/api/imagekit-auth');
+
+  // catch 404/500 clearly
+  if (!authResponse.ok) {
+    const text = await authResponse.text();
+    console.error('ImageKit auth route failed:', authResponse.status, text);
+    throw new Error('Image upload auth failed (ImageKit).');
+  }
+
+  const auth = await authResponse.json();
+
+  // if backend returns { error: "..." }
+  if (auth?.error) {
+    console.error('ImageKit auth payload error:', auth);
+    throw new Error(auth.error);
+  }
+
+  // must have these fields
+  if (!auth?.token || !auth?.signature || !auth?.expire || !auth?.publicKey) {
+    console.error('ImageKit auth missing fields:', auth);
+    throw new Error('Image upload auth is missing required fields.');
+  }
+
+  const extension = file.name.includes('.')
+    ? file.name.substring(file.name.lastIndexOf('.'))
+    : '';
+
+  const result = await upload({
+    file,
+    fileName: `${crypto.randomUUID()}${extension}`,
+    token: auth.token,
+    signature: auth.signature,
+    expire: auth.expire,
+    publicKey: auth.publicKey,
+    folder: file.type.startsWith('video/')
+      ? `/bmax/videos/${userId}`
+      : `/bmax/images/${userId}`,
+  });
+
+  return result; // expects result.url and result.fileType
+};
 
     const s3 = new S3Client({
       region: 'auto',
@@ -211,20 +258,72 @@ export default function Home() {
     };
   };
 
-  const handleCreatePost = async (e) => {
-    e.preventDefault();
-    if (!postText.trim() && !mediaFile) return;
-    setUploading(true);
+  // Create post with ImageKit media + Supabase database record
+const handleCreatePost = async (e) => {
+  e.preventDefault();
+
+  if (!postText.trim() && !mediaFile) return;
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError || !session?.user) {
+    console.error('SESSION ERROR:', sessionError);
+    showToast('Please sign in before posting');
+    return;
+  }
+
+  setUploading(true);
+
+  try {
     let uploadedMedia = null;
-    try {
-      if (mediaFile) {
-        uploadedMedia = await uploadToR2(mediaFile, user?.id);
-      }
-    } catch (err) {
-      showToast(err.message || 'Media upload failed');
-      setUploading(false);
+
+    if (mediaFile) {
+      uploadedMedia = await uploadToImageKit(mediaFile, session.user.id);
+    }
+
+    const insertPayload = {
+      user_id: session.user.id,
+      caption: postText.trim(),
+      post_type: composerType,
+      media_url: uploadedMedia?.url || null,
+      media_type: uploadedMedia?.fileType || (mediaFile ? mediaType : null),
+    };
+
+    const { data, error } = await supabase
+      .from('posts')
+      .insert(insertPayload)
+      .select('*, profiles(username, avatar_url)')
+      .single();
+
+    if (error) {
+      console.error('CREATE POST ERROR (Supabase):', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload: insertPayload,
+      });
+
+      // show real reason (RLS, missing column, etc.)
+      showToast(error.message || 'Failed to create post');
       return;
     }
+
+    setPosts((currentPosts) => [data, ...currentPosts]);
+
+    setPostText('');
+    clearMediaPreview();
+    showToast('Broadcast published!');
+  } catch (error) {
+    console.error('POST ERROR (general):', error);
+    showToast(error.message || 'Failed to create post');
+  } finally {
+    setUploading(false);
+  }
+};
 
     const { data, error } = await supabase
       .from('posts')
