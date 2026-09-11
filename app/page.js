@@ -147,8 +147,18 @@ button><button onClick={() => { setActiveTab('home'); setActiveCommentPostId(pos
  const visibleHubs = hubs.filter(h => `${h.name} ${h.description}`.toLowerCase().includes(hubSearch.toLowerCase()));
  return (
  <main style={styles.singleColumn}>
- <PageTitle title="Hubs" subtitle="Join focused communities and build with people who share your interests." action={<button onClick={() => showToast('Hub creation UI is
-ready for backend connection.')} style={styles.primaryBtn}>■ Create Hub</button>} />
+ <PageTitle
+  title="Hubs"
+  subtitle="Join focused communities and build with people who share your interests."
+  action={
+    <button
+      onClick={() => showToast('Hub creation UI is ready for backend connection.')}
+      style={styles.primaryBtn}
+    >
+      ■ Create Hub
+    </button>
+  }
+/>
  <input value={hubSearch} onChange={e => setHubSearch(e.target.value)} placeholder="Search hubs..." style={styles.input} />
  <div style={styles.hubGrid}>
  {visibleHubs.map(hub => <div key={hub.id} style={styles.hubCard}>
