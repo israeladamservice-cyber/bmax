@@ -291,8 +291,20 @@ avatarImg}/> : <div style={styles.avatar}>■</div>}<div><h3 style={{margin:0,co
  {user?.id !== selectedProfile.id && <button onClick={handleToggleFollow} style={{...styles.primaryBtn,width:'100%',backgroundColor:isFollowingSelected?'#374151':
 '#7e22ce'}}>{isFollowingSelected?'✓ Following':'■ Follow'}</button>}
  </div></div>}
- {showAuthModal && <div style={{...styles.modalOverlay,backdropFilter:'blur(8px)',backgroundColor:'rgba(3,0,8,.95)'}}><div style={{...styles.modalContent,border:'2px solid
-#7e22ce'}}>
+ {showAuthModal && (
+  <div
+    style={{
+      ...styles.modalOverlay,
+      backdropFilter: 'blur(8px)',
+      backgroundColor: 'rgba(3,0,8,.95)'
+    }}
+  >
+    <div
+      style={{
+        ...styles.modalContent,
+        border: '2px solid #7e22ce'
+      }}
+    >
  <div style={{textAlign:'center',marginBottom:20}}><h1 style={{...styles.logo,fontSize:32}}>BMAX</h1><p style={{color:'#94a3b8',fontSize:14}}>Global Builder Ecosystem</p></
 div>
  <h3 style={{margin:'0 0 16px',textAlign:'center'}}>{authMode==='signin'?'Sign In to Proceed':'Create your Account'}</h3>
