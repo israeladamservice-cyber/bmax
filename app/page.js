@@ -1,9 +1,10 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const supabaseUrl = 'https://dcdvbqlobtmeppfceapj.supabase.co';
-const supabaseAnonKey = 'sb_publishable_mzHTU0PoV5vmNeVUFG2eqw_-OWu0a0-';
+const supabaseUrl = 'https://dcdvbglobtmeppfceapj.supabase.co';
+const supabaseAnonKey = 'sb_publishable_mzHTU0PoV5vmNeVUFG2eqw_-OWu0a0-1';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function Home() {
@@ -47,11 +48,11 @@ export default function Home() {
 
   // Profile State
   const [username, setUsername] = useState('');
+  const [avatarFile, setAvatarFile] = useState(null);
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [avatarFile, setAvatarFile] = useState(null);
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [reputation, setReputation] = useState(0);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [userLikes, setUserLikes] = useState([]);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
@@ -64,19 +65,19 @@ export default function Home() {
   const [activeChat, setActiveChat] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
   const [chatInput, setChatInput] = useState('');
-
   const chatEndRef = useRef(null);
-
   const [searchQuery, setSearchQuery] = useState('');
+
   const [notifications, setNotifications] = useState([
     { id: 1, text: 'Welcome to BMAX. Start building your reputation.', read: false },
-    { id: 2, text: 'Your profile is ready to customize.', read: false },
+    { id: 2, text: 'Your profile is ready to customize.', read: false }
   ]);
+
   const [hubs, setHubs] = useState([
-    { id: 'web', name: 'Web Builders', description: 'Build, ship and discuss modern websites.', members: 1284, joined: false, icon: '■' },
-    { id: 'ai', name: 'AI Labs', description: 'AI tools, workflows, experiments and ideas.', members: 962, joined: false, icon: '■' },
-    { id: 'design', name: 'Design Studio', description: 'UI/UX, branding, graphics and creative work.', members: 741, joined: false, icon: '■' },
-    { id: 'growth', name: 'Creators & Growth', description: 'Marketing, personal brands and creator economy.', members: 523, joined: false, icon: '■' },
+    { id: 'web', name: 'Web Builders', description: 'Build, ship and discuss modern websites.', members: 1284, joined: false, icon: '🌐' },
+    { id: 'ai', name: 'AI Labs', description: 'AI tools, workflows, experiments and ideas.', members: 962, joined: false, icon: '🤖' },
+    { id: 'design', name: 'Design Studio', description: 'UI/UX, branding, graphics and creative work.', members: 741, joined: false, icon: '🎨' },
+    { id: 'growth', name: 'Creators & Growth', description: 'Marketing, personal brands and creator economy.', members: 523, joined: false, icon: '📈' }
   ]);
   const [hubSearch, setHubSearch] = useState('');
   const [selectedHub, setSelectedHub] = useState(null);
@@ -85,17 +86,16 @@ export default function Home() {
 
   const showToast = (message) => {
     setToast(message);
-    window.clearTimeout(window.__bmaxToastTimer);
-    window.__bmaxToastTimer = window.setTimeout(() => setToast(''), 2500);
+    window.clearTimeout(window._bmaxToastTimer);
+    window._bmaxToastTimer = window.setTimeout(() => setToast(''), 2500);
   };
 
   // Fetch posts from Supabase database
   const fetchPosts = async () => {
     const { data, error } = await supabase
       .from('posts')
-      .select('*, profiles(username, avatar_url)')
+      .select('*, profiles (username, avatar_url)')
       .order('created_at', { ascending: false });
-
     if (!error && data) {
       setPosts(data);
     }
@@ -110,7 +110,7 @@ export default function Home() {
   };
 
   const toggleHubJoin = (hubId) => {
-    setHubs(prev => prev.map(h => h.id === hubId ? { ...h, joined: !h.joined, members: h.members + (h.joined ? -1 : 1) } : h));
+    setHubs(prev => prev.map(h => h.id === hubId ? { ...h, joined: !h.joined, members: h.members + (!h.joined ? 1 : -1) } : h));
     const hub = hubs.find(h => h.id === hubId);
     if (hub) showToast(hub.joined ? `Left ${hub.name}` : `Joined ${hub.name}`);
   };
@@ -174,11 +174,65 @@ export default function Home() {
     }
   };
 
-  // Create post directly in Supabase
+  // Cloudflare R2 upload helper (via Next.js API Route or direct S3 client configuration)
+  const uploadToR2 = async (file, userId) => {
+    const MAX_IMAGE = 25 * 1024 * 1024;
+    const MAX_VIDEO = 100 * 1024 * 1024;
+    if (file.type.startsWith('image/') && file.size > MAX_IMAGE) {
+      throw new Error('Images must be 25MB or smaller.');
+    }
+    if (file.type.startsWith('video/') && file.size > MAX_VIDEO) {
+      throw new Error('Videos must be 100MB or smaller.');
+    }
+
+    // Initialize S3 client configured for Cloudflare R2
+    const s3 = new S3Client({
+      region: 'auto',
+      endpoint: process.env.NEXT_PUBLIC_R2_ENDPOINT, // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+      credentials: {
+        accessKeyId: process.env.NEXT_PUBLIC_R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.NEXT_PUBLIC_R2_SECRET_ACCESS_KEY,
+      },
+    });
+
+    const extension = file.name.includes('.') ? file.name.substring(file.name.lastIndexOf('.')) : '';
+    const fileName = `bmax/${file.type.startsWith('video/') ? 'videos' : 'images'}/${userId}/${crypto.randomUUID()}${extension}`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const command = new PutObjectCommand({
+      Bucket: process.env.NEXT_PUBLIC_R2_BUCKET_NAME,
+      Key: fileName,
+      Body: Buffer.from(arrayBuffer),
+      ContentType: file.type,
+    });
+
+    await s3.send(command);
+
+    // Construct public URL based on your configured R2 public domain or custom domain
+    const publicDomain = process.env.NEXT_PUBLIC_R2_PUBLIC_URL; // e.g., https://pub-xxx.r2.dev or custom domain
+    const url = `${publicDomain}/${fileName}`;
+
+    return {
+      url,
+      fileType: file.type.startsWith('video/') ? 'video' : 'image'
+    };
+  };
+
+  // Create post with Cloudflare R2 media & Supabase database record
   const handleCreatePost = async (e) => {
     e.preventDefault();
-    if (!postText.trim()) return;
+    if (!postText.trim() && !mediaFile) return;
     setUploading(true);
+    let uploadedMedia = null;
+    try {
+      if (mediaFile) {
+        uploadedMedia = await uploadToR2(mediaFile, user?.id);
+      }
+    } catch (err) {
+      showToast(err.message || 'Media upload failed');
+      setUploading(false);
+      return;
+    }
 
     const { data, error } = await supabase
       .from('posts')
@@ -187,11 +241,11 @@ export default function Home() {
           user_id: user?.id,
           caption: postText,
           post_type: composerType,
-          media_url: mediaPreview,
-          media_type: mediaType
+          media_url: uploadedMedia?.url || null,
+          media_type: uploadedMedia?.fileType || mediaType
         }
       ])
-      .select('*, profiles(username, avatar_url)')
+      .select('*, profiles (username, avatar_url)')
       .single();
 
     if (error) {
@@ -309,13 +363,20 @@ export default function Home() {
   });
 
   const navItems = [
-    ['home', '■', 'Home'], ['discover', '■', 'Discover'], ['hubs', '■', 'Hubs'],
-    ['create', '+', 'Create'], ['messages', '■', 'Messages'], ['profile', '■', 'Profile']
+    ['home', '🏠', 'Home'],
+    ['create', '✨', 'Create'],
+    ['discover', '🔍', 'Discover'],
+    ['hubs', '👥', 'Hubs'],
+    ['messages', '💬', 'Messages'],
+    ['profile', '👤', 'Profile']
   ];
 
   const PageTitle = ({ title, subtitle, action }) => (
     <div style={styles.pageTitleRow}>
-      <div><h2 style={styles.pageTitle}>{title}</h2>{subtitle && <p style={styles.pageSubtitle}>{subtitle}</p>}</div>
+      <div>
+        <h2 style={styles.pageTitle}>{title}</h2>
+        {subtitle && <p style={styles.pageSubtitle}>{subtitle}</p>}
+      </div>
       {action}
     </div>
   );
@@ -327,7 +388,13 @@ export default function Home() {
       <main style={styles.singleColumn}>
         <PageTitle title="Discover" subtitle="Find people, ideas and communities worth following." />
         <form onSubmit={handleSearchSubmit} style={styles.searchBox}>
-          <span>■</span><input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search BMAX..." style={styles.searchInput} />
+          <span>🔍</span>
+          <input 
+            value={searchQuery} 
+            onChange={e => setSearchQuery(e.target.value)} 
+            placeholder="Search BMAX..." 
+            style={styles.searchInput} 
+          />
           <button type="submit" style={styles.primaryBtn}>Search</button>
         </form>
         <div style={styles.topicGrid}>
@@ -346,19 +413,27 @@ export default function Home() {
           <div key={post.id} style={styles.postCard}>
             <div style={styles.postHeader}>
               <div className="author-link" onClick={() => handleOpenAuthorProfile(post.profiles)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {post.profiles?.avatar_url ? <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} /> : <div style={styles.feedAvatar}>■</div>}
+                {post.profiles?.avatar_url ? <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} /> : <div style={styles.feedAvatar}>👤</div>}
                 <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
               </div>
               <span style={styles.miniTag}>{post.post_type || 'update'}</span>
             </div>
             <p style={styles.postContent}>{post.caption}</p>
-            {post.media_url && (post.media_type === 'image' ? <img src={post.media_url} alt="Broadcast" style={styles.postMedia} /> : <video src={post.media_url} controls style={styles.postMedia} />)}
+            {post.media_url && (
+              post.media_type === 'image' ? (
+                <img src={post.media_url} alt="Broadcast" style={styles.postMedia} />
+              ) : (
+                <video src={post.media_url} controls style={styles.postMedia} />
+              )
+            )}
             <div style={styles.postActions}>
-              <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>{userLikes.includes(post.id) ? '❤■ Liked' : '■ Like'}</button>
-              <button onClick={() => { setActiveTab('home'); setActiveCommentPostId(post.id); }} style={styles.actionBtn}>■ Reply</button>
+              <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>
+                {userLikes.includes(post.id) ? '❤️ Liked' : '🤍 Like'}
+              </button>
+              <button onClick={() => { setActiveTab('home'); setActiveCommentPostId(post.id); }} style={styles.actionBtn}>Reply</button>
             </div>
           </div>
-        )) : <EmptyState icon="■" title="Nothing found yet" text="Try another search or explore a topic above." />}
+        )) : <EmptyState icon="📭" title="Nothing found yet" text="Try another search or explore a topic above." />}
       </main>
     );
   };
@@ -372,7 +447,7 @@ export default function Home() {
           subtitle="Join focused communities and build with people who share your interests."
           action={
             <button onClick={() => showToast('Hub creation UI is ready for backend connection.')} style={styles.primaryBtn}>
-              ■ Create Hub
+              Create Hub
             </button>
           }
         />
@@ -383,16 +458,16 @@ export default function Home() {
               <div style={styles.hubIcon}>{hub.icon}</div>
               <h3 style={styles.hubName}>{hub.name}</h3>
               <p style={styles.hubDescription}>{hub.description}</p>
-              <div style={styles.hubMeta}><span>■ {hub.members.toLocaleString()}</span><span>Public</span></div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={styles.hubMeta}><span>{hub.members.toLocaleString()} members</span><span>Public</span></div>
+              <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={() => setSelectedHub(hub)} style={{ ...styles.secondaryBtn, flex: 1 }}>Open Hub</button>
-                <button onClick={() => toggleHubJoin(hub.id)} style={{ ...styles.primaryBtn, flex: 1 }}>{hub.joined ? '✓ Joined' : 'Join'}</button>
+                <button onClick={() => toggleHubJoin(hub.id)} style={{ ...styles.primaryBtn, flex: 1 }}>{hub.joined ? 'Joined' : 'Join'}</button>
               </div>
             </div>
           ))}
         </div>
         {selectedHub && (
-          <div style={styles.modalOverlay} onClick={() => setSelectedHub(null)}>
+          <div style={styles.modaloverlay} onClick={() => setSelectedHub(null)}>
             <div style={styles.largeModal} onClick={e => e.stopPropagation()}>
               <div style={styles.modalTop}>
                 <div>
@@ -400,13 +475,13 @@ export default function Home() {
                   <h2 style={styles.pageTitle}>{selectedHub.name}</h2>
                   <p style={styles.pageSubtitle}>{selectedHub.description}</p>
                 </div>
-                <button onClick={() => setSelectedHub(null)} style={styles.closeBtn}>✕</button>
+                <button onClick={() => setSelectedHub(null)} style={styles.closeBtn}>X</button>
               </div>
               <div style={styles.hubHero}><strong>{selectedHub.members.toLocaleString()} builders</strong><span>•</span><span>Public community</span></div>
               <div style={styles.placeholderPanel}>
-                <div style={{ fontSize: 32 }}>■</div>
+                <div style={{ fontSize: 32 }}>💬</div>
                 <h3>Hub feed ready</h3>
-                <p>Members can post projects, ask questions and collaborate here. This frontend is wired for the next Supabase hub tables.</p>
+                <p>Members can post projects, ask questions and collaborate here. This frontend is wired for Supabase hub tables.</p>
                 <button onClick={() => { toggleHubJoin(selectedHub.id); setSelectedHub(null); }} style={styles.primaryBtn}>
                   {selectedHub.joined ? 'Leave Hub' : 'Join Hub'}
                 </button>
@@ -423,27 +498,27 @@ export default function Home() {
       <PageTitle title="Create" subtitle="Turn an idea into a broadcast and start building your reputation." />
       <div style={styles.createGrid}>
         <div style={styles.card}>
-          <div style={styles.createIcon}>■</div>
+          <div style={styles.createIcon}>📢</div>
           <h3>Broadcast</h3>
           <p>Share an update, project, question, image or video with the BMAX community.</p>
-          <button onClick={() => setActiveTab('profile')} style={styles.primaryBtn}>Create Broadcast →</button>
+          <button onClick={() => setActiveTab('profile')} style={styles.primaryBtn}>Create Broadcast</button>
         </div>
         <div style={styles.card}>
-          <div style={styles.createIcon}>■</div>
+          <div style={styles.createIcon}>🏆</div>
           <h3>Challenge</h3>
           <p>Join a public challenge, build something and earn reputation through your contribution.</p>
           <button onClick={() => { setChallengeJoined(true); showToast('You joined the BMAX Builder Challenge'); }} style={styles.primaryBtn}>
-            {challengeJoined ? '✓ Joined Challenge' : 'Join Challenge'}
+            {challengeJoined ? 'Joined Challenge' : 'Join Challenge'}
           </button>
         </div>
         <div style={styles.card}>
-          <div style={styles.createIcon}>■</div>
+          <div style={styles.createIcon}>👥</div>
           <h3>Hub</h3>
           <p>Create a focused community around a skill, project, interest or professional niche.</p>
           <button onClick={() => setActiveTab('hubs')} style={styles.primaryBtn}>Explore Hubs →</button>
         </div>
         <div style={styles.card}>
-          <div style={styles.createIcon}>■</div>
+          <div style={styles.createIcon}>💼</div>
           <h3>Opportunity</h3>
           <p>Post a collaboration, freelance opportunity or job for builders on BMAX.</p>
           <button onClick={() => showToast('Opportunity composer is ready for the marketplace/jobs backend.')} style={styles.primaryBtn}>Start Opportunity</button>
@@ -456,7 +531,7 @@ export default function Home() {
           <p style={styles.pageSubtitle}>Build something useful. Share the process. Earn reputation.</p>
         </div>
         <button onClick={() => { setChallengeJoined(true); showToast('Challenge joined!'); }} style={styles.primaryBtn}>
-          {challengeJoined ? '✓ Joined' : 'Join Challenge'}
+          {challengeJoined ? 'Joined' : 'Join Challenge!'}
         </button>
       </div>
     </main>
@@ -520,26 +595,25 @@ export default function Home() {
         html { scroll-behavior: smooth; }
         body { margin: 0; padding: 0; background-color: #030008; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         button, input, textarea { font: inherit; }
-        button { transition: transform .15s ease, opacity .15s ease, border-color .15s ease, background .15s ease; }
+        button { transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease; }
         button:active { transform: translateY(1px); }
-        button:disabled { opacity: .55; cursor: not-allowed; }
-        .author-link { cursor: pointer; transition: opacity 0.2s; } .author-link:hover { opacity: 0.8; text-decoration: underline; }
-        ::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: #3b0764; border-radius: 10px; }
-        
+        button:disabled { opacity: 0.55; cursor: not-allowed; }
+        .author-link { cursor: pointer; transition: opacity 0.2s; }
+        .author-link:hover { opacity: 0.8; text-decoration: underline; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #3b0764; border-radius: 10px; }
         @media (max-width: 900px) {
           .topicGrid, .hubGrid, .createGrid { grid-template-columns: 1fr !important; }
           .statsGrid { grid-template-columns: repeat(2, 1fr) !important; }
         }
-        
         @media (max-width: 768px) {
           .responsive-grid { grid-template-columns: 1fr !important; }
           .desktopNav { display: none !important; }
           .mobileNav { display: flex !important; }
           .headerSearch { display: none !important; }
-          .appHeader { padding: 10px 14px !important; }
         }
+        .appHeader { padding: 10px 14px !important; }
       `}</style>
-
       <header style={styles.header} className="appHeader">
         <button onClick={() => setActiveTab('home')} style={styles.brandButton}>
           <div style={styles.brandGroup}>
@@ -548,7 +622,7 @@ export default function Home() {
           </div>
         </button>
         <form onSubmit={handleSearchSubmit} style={styles.headerSearch} className="headerSearch">
-          <span>■</span>
+          <span>🔍</span>
           <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search BMAX" style={styles.headerSearchInput} />
         </form>
         <nav style={styles.topNav} className="desktopNav">
@@ -559,7 +633,6 @@ export default function Home() {
           ))}
         </nav>
         <div style={styles.headerRight}>
-          {/* APK Download Button */}
           <a
             href="/my-app.apk"
             download="BMAX.apk"
@@ -571,9 +644,8 @@ export default function Home() {
               textDecoration: 'none',
             }}
           >
-            <span>■</span> App (.APK)
+            <span>📱</span> App (APK)
           </a>
-
           <button
             onClick={() => {
               markNotificationsRead();
@@ -581,12 +653,12 @@ export default function Home() {
             }}
             style={styles.bellBtn}
           >
-            ■{unreadCount > 0 && <span style={styles.notificationDot}>{unreadCount}</span>}
+            🔔
+            {unreadCount > 0 && <span style={styles.notificationDot}>{unreadCount}</span>}
           </button>
           {user && <button onClick={handleSignOut} style={styles.secondaryBtn}>Sign Out</button>}
         </div>
       </header>
-
       <div style={styles.mobileNav} className="mobileNav">
         {navItems.map(([tab, icon, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={activeTab === tab ? styles.mobileNavActive : styles.mobileNavBtn}>
@@ -597,23 +669,23 @@ export default function Home() {
       </div>
 
       {selectedProfile && (
-        <div style={styles.modalOverlay} onClick={() => setSelectedProfile(null)}>
+        <div style={styles.modaloverlay} onClick={() => setSelectedProfile(null)}>
           <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>■ Public Profile</h3>
-              <button onClick={() => setSelectedProfile(null)} style={styles.closeBtn}>✕</button>
+              <h3 style={{ margin: 0 }}>Public Profile</h3>
+              <button onClick={() => setSelectedProfile(null)} style={styles.closeBtn}>X</button>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
-              {selectedProfile.avatar_url ? <img src={selectedProfile.avatar_url} alt="Avatar" style={styles.avatarImg} /> : <div style={styles.avatar}>■</div>}
+              {selectedProfile.avatar_url ? <img src={selectedProfile.avatar_url} alt="Avatar" style={styles.avatarImg} /> : <div style={styles.avatar}>👤</div>}
               <div>
                 <h3 style={{ margin: 0, color: '#c084fc' }}>@{selectedProfile.username}</h3>
                 <p style={{ margin: '4px 0', fontSize: 13, color: '#94a3b8' }}>{selectedProfile.bio || 'BMAX builder'}</p>
-                <p style={styles.miniText}>■ {Number(selectedProfile.reputation || 0).toLocaleString()} reputation</p>
+                <p style={styles.miniText}>{Number(selectedProfile.reputation || 0).toLocaleString()} reputation</p>
               </div>
             </div>
             {user?.id !== selectedProfile.id && (
               <button onClick={handleToggleFollow} style={{ ...styles.primaryBtn, width: '100%', backgroundColor: isFollowingSelected ? '#374151' : '#7e22ce' }}>
-                {isFollowingSelected ? '✓ Following' : '■ Follow'}
+                {isFollowingSelected ? 'Following' : 'Follow'}
               </button>
             )}
           </div>
@@ -621,7 +693,7 @@ export default function Home() {
       )}
 
       {showAuthModal && (
-        <div style={{ ...styles.modalOverlay, backdropFilter: 'blur(8px)', backgroundColor: 'rgba(3,0,8,.95)' }}>
+        <div style={{ ...styles.modaloverlay, backdropFilter: 'blur(8px)', backgroundColor: 'rgba(3,0,8,.95)' }}>
           <div style={{ ...styles.modalContent, border: '2px solid #7e22ce' }}>
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
               <h1 style={{ ...styles.logo, fontSize: 32 }}>BMAX</h1>
@@ -648,12 +720,15 @@ export default function Home() {
       )}
 
       <div style={styles.layoutContainer} className="responsive-grid">
-        {activeTab === 'discover' ? renderDiscover() : activeTab === 'hubs' ? renderHubs() : activeTab === 'create' ? renderCreate() : activeTab === 'profile' ? (
+        {activeTab === 'discover' ? renderDiscover() :
+         activeTab === 'hubs' ? renderHubs() :
+         activeTab === 'create' ? renderCreate() :
+         activeTab === 'profile' ? (
           <main style={styles.singleColumn}>
             <PageTitle title="Your Profile" subtitle="Your identity, work and reputation on BMAX." />
             <div style={styles.profileCard}>
               <div style={styles.profileHeader}>
-                {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={styles.avatarImg} /> : <div style={styles.avatar}>■</div>}
+                {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={styles.avatarImg} /> : <div style={styles.avatar}>👤</div>}
                 <div style={{ flex: 1 }}>
                   <h2 style={{ margin: 0 }}>@{username || user?.email}</h2>
                   <p style={styles.pageSubtitle}>{bio || 'Add a bio to tell builders what you do.'}</p>
@@ -661,10 +736,10 @@ export default function Home() {
                 <button onClick={() => setIsEditingProfile(!isEditingProfile)} style={styles.primaryBtn}>{isEditingProfile ? 'Close Edit' : 'Edit Profile'}</button>
               </div>
               <div style={styles.statsGrid} className="statsGrid">
-                <div><strong>{reputation.toLocaleString()}</strong><span>Reputation</span></div>
-                <div><strong>{followersCount}</strong><span>Followers</span></div>
-                <div><strong>{followingCount}</strong><span>Following</span></div>
-                <div><strong>{posts.filter(p => p.user_id === user?.id).length}</strong><span>Broadcasts</span></div>
+                <div style={styles.statsCell}><strong>{reputation.toLocaleString()}</strong><span>Reputation</span></div>
+                <div style={styles.statsCell}><strong>{followersCount}</strong><span>Followers</span></div>
+                <div style={styles.statsCell}><strong>{followingCount}</strong><span>Following</span></div>
+                <div style={styles.statsCell}><strong>{posts.filter(p => p.user_id === user?.id).length}</strong><span>Broadcasts</span></div>
               </div>
               {isEditingProfile && (
                 <div style={styles.editSection}>
@@ -676,19 +751,19 @@ export default function Home() {
               )}
             </div>
             <div style={styles.card}>
-              <h3 style={styles.sectionTitle}>■ Broadcast New Post</h3>
+              <h3 style={styles.sectionTitle}>Broadcast New Post</h3>
               <form onSubmit={handleCreatePost} style={styles.composerForm}>
                 <textarea value={postText} onChange={e => setPostText(e.target.value)} placeholder="Share a project update..." style={styles.textArea} />
                 {isProcessingMedia && <div style={styles.processing}>Processing media...</div>}
                 {mediaPreview && (
                   <div style={styles.previewContainer}>
                     {mediaType === 'image' ? <img src={mediaPreview} alt="Preview" style={styles.mediaPreview} /> : <video src={mediaPreview} controls style={styles.mediaPreview} />}
-                    <button type="button" onClick={clearMediaPreview} style={styles.removeMediaBtn}>✕</button>
+                    <button type="button" onClick={clearMediaPreview} style={styles.removeMediaBtn}>X</button>
                   </div>
                 )}
                 <div style={styles.composerFooter}>
-                  <label style={styles.iconBtn}>■ Attach<input type="file" accept="image/*,video/*" onChange={handleMediaSelect} style={{ display: 'none' }} /></label>
-                  <button type="submit" disabled={uploading || isProcessingMedia} style={styles.broadcastBtn}>{uploading ? 'Publishing...' : '■ Broadcast'}</button>
+                  <label style={styles.iconBtn}>Attach<input type="file" accept="image/*,video/*" onChange={handleMediaSelect} style={{ display: 'none' }} /></label>
+                  <button type="submit" disabled={uploading || isProcessingMedia} style={styles.broadcastBtn}>{uploading ? 'Publishing...' : 'Broadcast'}</button>
                 </div>
               </form>
             </div>
@@ -708,7 +783,7 @@ export default function Home() {
                       </div>
                     ))
                   ) : (
-                    <EmptyState icon="■" title="Start the conversation" text="Say hello and start collaborating." />
+                    <EmptyState icon="💬" title="Start the conversation" text="Say hello and start collaborating." />
                   )}
                   <div ref={chatEndRef} />
                 </div>
@@ -749,14 +824,14 @@ export default function Home() {
                     return (
                       <div key={post.id} style={styles.postCard}>
                         <div style={styles.postHeader}>
-                          <div className="author-link" onClick={() => handleOpenAuthorProfile(post.profiles)} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            {post.profiles?.avatar_url ? <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} /> : <div style={styles.feedAvatar}>■</div>}
+                          <div className="author-link" onClick={() => handleOpenAuthorProfile(post.profiles)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {post.profiles?.avatar_url ? <img src={post.profiles.avatar_url} alt="Avatar" style={styles.feedAvatarImg} /> : <div style={styles.feedAvatar}>👤</div>}
                             <span style={styles.username}>@{post.profiles?.username || 'builder'}</span>
                           </div>
                           {isAuthor && !isEditing && (
                             <div>
-                              <button onClick={() => handleStartEdit(post)} style={styles.iconActionBtn}>✏■</button>
-                              <button onClick={() => handleDeletePost(post.id)} style={styles.iconActionBtn}>■■</button>
+                              <button onClick={() => handleStartEdit(post)} style={styles.iconActionBtn}>✏️</button>
+                              <button onClick={() => handleDeletePost(post.id)} style={styles.iconActionBtn}>🗑️</button>
                             </div>
                           )}
                         </div>
@@ -771,11 +846,19 @@ export default function Home() {
                         ) : (
                           <p style={styles.postContent}>{post.caption}</p>
                         )}
-                        {post.media_url && (post.media_type === 'image' ? <img src={post.media_url} alt="Broadcast" style={styles.postMedia} /> : <video src={post.media_url} controls style={styles.postMedia} />)}
+                        {post.media_url && (
+                          post.media_type === 'image' ? (
+                            <img src={post.media_url} alt="Broadcast" style={styles.postMedia} />
+                          ) : (
+                            <video src={post.media_url} controls style={styles.postMedia} />
+                          )
+                        )}
                         <div style={styles.postActions}>
-                          <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>{isLiked ? '❤■ Liked' : '■ Like'}</button>
-                          <button onClick={() => toggleComments(post.id)} style={styles.actionBtn}>■ Reply {postComments.length ? `(${postComments.length})` : ''}</button>
-                          <button onClick={() => { navigator.clipboard?.writeText(window.location.href); showToast('Link copied'); }} style={styles.actionBtn}>■ Share</button>
+                          <button onClick={() => handleLike(post.id)} style={styles.actionBtn}>
+                            {isLiked ? '❤️ Liked' : '🤍 Like'}
+                          </button>
+                          <button onClick={() => toggleComments(post.id)} style={styles.actionBtn}>Reply {postComments.length ? `(${postComments.length})` : ''}</button>
+                          <button onClick={() => { navigator.clipboard?.writeText(window.location.href); showToast('Link copied'); }} style={styles.actionBtn}>Share</button>
                         </div>
                         {isCommentsOpen && (
                           <div style={styles.commentsContainer}>
@@ -798,7 +881,7 @@ export default function Home() {
                   })}
                 </div>
               ) : (
-                <EmptyState icon="■" title="No broadcasts yet" text="Be one of the first builders to publish something on BMAX." />
+                <EmptyState icon="📭" title="No broadcasts yet" text="Be one of the first builders to publish something on BMAX." />
               )}
             </main>
             <aside style={styles.sidebarColumn}>
@@ -815,15 +898,15 @@ export default function Home() {
                     <span>{h.icon}</span>
                     <div style={styles.miniHubText}>
                       <strong>{h.name}</strong>
-                      <small>{h.members.toLocaleString()} members</small>
+                      <small style={styles.miniHubSmall}>{h.members.toLocaleString()} members</small>
                     </div>
                     <button onClick={() => setActiveTab('hubs')} style={styles.linkBtn}>View</button>
                   </div>
                 ))}
               </div>
               <div style={styles.card}>
-                <h3 style={styles.sidebarTitle}>■ Quick Create</h3>
-                <button onClick={() => setActiveTab('create')} style={{ ...styles.primaryBtn, width: '100%' }}>■ Create something</button>
+                <h3 style={styles.sidebarTitle}>Quick Create</h3>
+                <button onClick={() => setActiveTab('create')} style={{ ...styles.primaryBtn, width: '100%' }}>Create something</button>
               </div>
             </aside>
           </>
@@ -838,7 +921,7 @@ const styles = {
   appWrapper: { backgroundColor: '#030008', color: '#f8fafc', minHeight: '100vh', paddingBottom: '80px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 28px', backgroundColor: '#090514', borderBottom: '1px solid #1e1b4b', position: 'sticky', top: 0, zIndex: 100 },
   brandGroup: { display: 'flex', alignItems: 'center', gap: '10px' },
-  logo: { margin: 0, fontSize: '24px', fontWeight: '900', letterSpacing: '2px', color: '#c084fc' },
+  logo: { margin: 0, fontSize: '24px', fontWeight: 900, letterSpacing: '2px', color: '#c084fc' },
   badge: { backgroundColor: '#581c87', fontSize: '10px', padding: '2px 8px', borderRadius: '10px', color: '#f8fafc', fontWeight: 'bold' },
   topNav: { display: 'flex', gap: '6px' },
   navBtn: { backgroundColor: 'transparent', border: 'none', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' },
@@ -865,19 +948,18 @@ const styles = {
   feedAvatarImg: { width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' },
   username: { color: '#c084fc', fontWeight: 'bold', fontSize: '14px' },
   iconActionBtn: { backgroundColor: 'transparent', border: 'none', cursor: 'pointer', fontSize: '14px', opacity: 0.8 },
-  postContent: { margin: '0 0 14px 0', lineHeight: '1.5', wordBreak: 'break-word', fontSize: '15px' },
-  mediaWrapper: { borderRadius: '12px', overflow: 'hidden', backgroundColor: '#000', marginBottom: '14px', border: '1px solid #1e1b4b' },
-  postMedia: { width: '100%', maxHeight: '420px', objectFit: 'cover', display: 'block' },
+  postContent: { margin: '0 0 14px 0', lineHeight: 1.5, wordBreak: 'break-word', fontSize: '15px' },
+  postMedia: { width: '100%', maxHeight: '420px', objectFit: 'cover', display: 'block', borderRadius: '12px' },
   postActions: { display: 'flex', gap: '20px', borderTop: '1px solid #1e1b4b', paddingTop: '12px' },
   actionBtn: { backgroundColor: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' },
   commentsContainer: { marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #1e1b4b' },
-  commentItem: { backgroundColor: '#030008', padding: '8px 12px', borderRadius: '8px', border: '1px solid #120b24', display: 'flex', gap: '8px', alignItems: 'flex-start' },
+  commentItem: { backgroundColor: '#030008', padding: '8px 12px', borderRadius: '8px', border: '1px solid #120b24', display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' },
   sidebarTitle: { margin: '0 0 12px 0', fontSize: '15px', color: '#f8fafc' },
   authForm: { display: 'flex', flexDirection: 'column', gap: '10px' },
   input: { backgroundColor: '#030008', border: '1px solid #1e1b4b', color: '#fff', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', width: '100%' },
   primaryBtn: { backgroundColor: '#7e22ce', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
   secondaryBtn: { backgroundColor: '#120b24', border: '1px solid #1e1b4b', color: '#fff', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' },
-  googleBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', color: '#1f2937', border: 'none', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', width: '100%' },
+  googleBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', color: '#1f2937', border: 'none', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', width: '100%' },
   divider: { display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '12px 0', borderBottom: '1px solid #1e1b4b', position: 'relative' },
   dividerText: { backgroundColor: '#090514', padding: '0 8px', color: '#64748b', fontSize: '11px', position: 'relative', top: '1px' },
   errorBox: { backgroundColor: '#450a0a', color: '#fecaca', padding: '8px', borderRadius: '6px', fontSize: '12px', marginBottom: '10px' },
@@ -885,59 +967,58 @@ const styles = {
   profileHeader: { display: 'flex', gap: '20px', alignItems: 'center' },
   avatar: { width: '70px', height: '70px', borderRadius: '50%', backgroundColor: '#1e1b4b', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '28px' },
   avatarImg: { width: '70px', height: '70px', borderRadius: '50%', objectFit: 'cover' },
-  profileActions: { display: 'flex', gap: '8px', marginTop: '16px' },
   editSection: { marginTop: '16px', borderTop: '1px solid #1e1b4b', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' },
-  conversationCard: { backgroundColor: '#030008', border: '1px solid #1e1b4b', padding: '14px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
+  conversationCard: { backgroundColor: '#030008', border: '1px solid #1e1b4b', padding: '14px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', width: '100%', marginBottom: '8px', color: '#fff' },
   unreadBadge: { backgroundColor: '#7e22ce', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' },
-  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '16px' },
+  modaloverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '16px' },
   modalContent: { backgroundColor: '#090514', border: '1px solid #7e22ce', borderRadius: '16px', padding: '30px', maxWidth: '400px', width: '100%', boxShadow: '0 10px 30px rgba(0,0,0,0.8)' },
   closeBtn: { backgroundColor: 'transparent', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' },
   brandButton: { background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' },
-  headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
-  headerSearch: { display: 'flex', alignItems: 'center', gap: 8, background: '#030008', border: '1px solid #1e1b4b', borderRadius: 10, padding: '7px 10px', width: 220 },
-  headerSearchInput: { flex: 1, minWidth: 0, background: 'transparent', border: 0, outline: 0, color: '#fff', fontSize: 13 },
-  bellBtn: { position: 'relative', background: '#120b24', border: '1px solid #1e1b4b', color: '#fff', borderRadius: 9, padding: '8px 10px', cursor: 'pointer' },
-  notificationDot: { position: 'absolute', top: -6, right: -6, minWidth: 17, height: 17, borderRadius: 20, background: '#fbbf24', color: '#090514', fontSize: 9, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  mobileNav: { display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 200, background: '#090514', borderTop: '1px solid #1e1b4b', justifyContent: 'space-around', padding: '6px 4px calc(6px + env(safe-area-inset-bottom))' },
-  mobileNavBtn: { flex: 1, background: 'transparent', border: 0, color: '#64748b', padding: '5px 2px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' },
-  mobileNavActive: { flex: 1, background: '#1e1b4b', border: '1px solid #7e22ce', color: '#fbbf24', borderRadius: 8, padding: '5px 2px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' },
-  singleColumn: { gridColumn: '1 / -1', maxWidth: 900, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 16 },
-  pageTitleRow: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
-  pageTitle: { margin: 0, fontSize: 28, fontWeight: 850, letterSpacing: '-0.5px' },
-  pageSubtitle: { margin: '6px 0 0', color: '#94a3b8', fontSize: 13, lineHeight: 1.5 },
-  searchBox: { display: 'flex', gap: 8, alignItems: 'center', background: '#090514', border: '1px solid #1e1b4b', borderRadius: 14, padding: 8 },
-  searchInput: { flex: 1, minWidth: 0, background: 'transparent', border: 0, outline: 0, color: '#fff', padding: 8 },
-  topicGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 },
-  topicCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: 14, color: '#fff', padding: 16, textAlign: 'left', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 7 },
-  linkBtn: { background: 'transparent', border: 0, color: '#c084fc', cursor: 'pointer', padding: 4 },
-  sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  sectionTitle: { margin: 0, fontSize: 16, color: '#f8fafc' },
-  miniTag: { display: 'inline-flex', alignItems: 'center', background: '#1e1b4b', border: '1px solid #3b0764', color: '#c084fc', borderRadius: 999, padding: '3px 7px', fontSize: 9, fontWeight: 800, textTransform: 'uppercase' },
-  hubGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 },
-  hubCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: 16, padding: 18 },
-  hubIcon: { width: 48, height: 48, borderRadius: 13, background: '#1e1b4b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginBottom: 10 },
-  hubName: { margin: '0 0 5px', fontSize: 17 },
-  hubDescription: { color: '#94a3b8', minHeight: 42, fontSize: 13, lineHeight: 1.5, margin: 0 },
-  hubMeta: { display: 'flex', justifyContent: 'space-between', color: '#64748b', fontSize: 11, margin: '14px 0' },
-  largeModal: { background: '#090514', border: '1px solid #7e22ce', borderRadius: 18, padding: 24, maxWidth: 650, width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.8)' },
-  modalTop: { display: 'flex', justifyContent: 'space-between', gap: 16 },
-  hubHero: { display: 'flex', gap: 10, color: '#94a3b8', borderTop: '1px solid #1e1b4b', borderBottom: '1px solid #1e1b4b', padding: '14px 0', margin: '16px 0' },
-  placeholderPanel: { textAlign: 'center', padding: '36px 20px', border: '1px dashed #3b0764', borderRadius: 14, background: '#030008' },
-  createGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 },
-  createIcon: { fontSize: 30, marginBottom: 10 },
-  challengeBanner: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, background: 'linear-gradient(135deg,#120b24,#1e1b4b)', border: '1px solid #7e22ce', borderRadius: 16, padding: 20 },
-  profileCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: 16, padding: 20 },
-  statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginTop: 20, borderTop: '1px solid #1e1b4b', paddingTop: 16 },
-  statsCell: { background: '#030008', borderRadius: 10, padding: 12 },
-  repNumber: { fontSize: 36, fontWeight: 900, color: '#fbbf24', margin: '10px 0' },
-  miniText: { color: '#64748b', fontSize: 11, margin: '5px 0' },
+  headerRight: { display: 'flex', alignItems: 'center', gap: '8px' },
+  headerSearch: { display: 'flex', alignItems: 'center', gap: '8px', background: '#030008', border: '1px solid #1e1b4b', borderRadius: '10px', padding: '4px 10px', width: '220px' },
+  headerSearchInput: { flex: 1, minWidth: 0, background: 'transparent', border: 0, outline: 0, color: '#fff', fontSize: '13px' },
+  bellBtn: { position: 'relative', background: '#120b24', border: '1px solid #1e1b4b', color: '#fff', borderRadius: '10px', padding: '8px 10px', cursor: 'pointer' },
+  notificationDot: { position: 'absolute', top: '-6px', right: '-6px', minWidth: '17px', height: '17px', borderRadius: '20px', background: '#fbbf24', color: '#090514', fontSize: '9px', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  mobileNav: { display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 200, background: '#090514', borderTop: '1px solid #1e1b4b', justifyContent: 'space-around', padding: '10px 4px calc(6px + env(safe-area-inset-bottom))' },
+  mobileNavBtn: { flex: 1, background: 'transparent', border: 0, color: '#64748b', padding: '5px 2px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' },
+  mobileNavActive: { flex: 1, background: '#1e1b4b', border: '1px solid #7e22ce', color: '#fbbf24', borderRadius: '8px', padding: '5px 2px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' },
+  singleColumn: { gridColumn: '1 / -1', maxWidth: '900px', margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' },
+  pageTitleRow: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px' },
+  pageTitle: { margin: 0, fontSize: '28px', fontWeight: 850, letterSpacing: '-0.5px' },
+  pageSubtitle: { margin: '6px 0 0', color: '#94a3b8', fontSize: '13px', lineHeight: 1.5 },
+  searchBox: { display: 'flex', gap: '8px', alignItems: 'center', background: '#090514', border: '1px solid #1e1b4b', borderRadius: '14px', padding: '8px' },
+  searchInput: { flex: 1, minWidth: 0, background: 'transparent', border: 0, outline: 0, color: '#fff', padding: '8px' },
+  topicGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' },
+  topicCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: '14px', color: '#fff', padding: '16px', textAlign: 'left', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '7px' },
+  linkBtn: { background: 'transparent', border: 0, color: '#c084fc', cursor: 'pointer', padding: '4px' },
+  sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' },
+  sectionTitle: { margin: 0, fontSize: '16px', color: '#f8fafc' },
+  miniTag: { display: 'inline-flex', alignItems: 'center', background: '#1e1b4b', border: '1px solid #3b0764', color: '#c084fc', borderRadius: '999px', padding: '3px 7px', fontSize: '9px', fontWeight: 800, textTransform: uppercase },
+  hubGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },
+  hubCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: '16px', padding: '18px' },
+  hubIcon: { width: '48px', height: '48px', borderRadius: '13px', background: '#1e1b4b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', marginBottom: '10px' },
+  hubName: { margin: '0 0 5px', fontSize: '17px' },
+  hubDescription: { color: '#94a3b8', minHeight: '42px', fontSize: '13px', lineHeight: 1.5, margin: 0 },
+  hubMeta: { display: 'flex', justifyContent: 'space-between', color: '#64748b', fontSize: '11px', margin: '14px 0' },
+  largeModal: { background: '#090514', border: '1px solid #7e22ce', borderRadius: '18px', padding: '24px', maxWidth: '650px', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' },
+  modalTop: { display: 'flex', justifyContent: 'space-between', gap: '16px' },
+  hubHero: { display: 'flex', gap: '10px', color: '#94a3b8', borderTop: '1px solid #1e1b4b', borderBottom: '1px solid #1e1b4b', padding: '14px 0', margin: '16px 0' },
+  placeholderPanel: { textAlign: 'center', padding: '36px 20px', border: '1px dashed #3b0764', borderRadius: '14px', background: '#030008' },
+  createGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },
+  createIcon: { fontSize: '30px', marginBottom: '10px' },
+  challengeBanner: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', background: 'linear-gradient(135deg, #120b24, #1e1b4b)', border: '1px solid #7e22ce', borderRadius: '16px', padding: '20px' },
+  profileCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: '16px', padding: '20px' },
+  statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginTop: '20px', borderTop: '1px solid #1e1b4b', paddingTop: '16px' },
+  statsCell: { background: '#030008', borderRadius: '10px', padding: '12px', textAlign: 'center' },
+  repNumber: { fontSize: '36px', fontWeight: 900, color: '#fbbf24', margin: '10px 0' },
+  miniText: { color: '#64748b', fontSize: '11px', margin: '5px 0' },
   inlineLink: { background: 'transparent', border: 0, color: '#c084fc', cursor: 'pointer', padding: 0 },
-  processing: { color: '#fbbf24', fontSize: 12 },
-  chatWindow: { height: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 9, padding: '10px 0', marginBottom: 10 },
-  miniHub: { display: 'flex', alignItems: 'center', gap: 9, padding: '9px 0', borderBottom: '1px solid #1e1b4b' },
+  processing: { color: '#fbbf24', fontSize: '12px' },
+  chatWindow: { height: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '9px', padding: '10px 0', marginBottom: '10px' },
+  miniHub: { display: 'flex', alignItems: 'center', gap: '9px', padding: '10px 0', borderBottom: '1px solid #1e1b4b' },
   miniHubText: { flex: 1 },
-  miniHubSmall: { display: 'block', color: '#64748b', fontSize: 10, marginTop: 2 },
-  emptyState: { textAlign: 'center', padding: '60px 20px', background: '#090514', border: '1px dashed #1e1b4b', borderRadius: 16 },
-  emptyIcon: { fontSize: 32, marginBottom: 8 },
-  toast: { position: 'fixed', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 2000, background: '#f8fafc', color: '#090514', padding: '10px 15px', borderRadius: 10, fontWeight: 700, fontSize: 12, boxShadow: '0 10px 30px rgba(0,0,0,.4)' }
+  miniHubSmall: { display: 'block', color: '#64748b', fontSize: '10px', marginTop: '2px' },
+  emptyState: { textAlign: 'center', padding: '60px 20px', background: '#090514', border: '1px dashed #1e1b4b', borderRadius: '16px' },
+  emptyIcon: { fontSize: '32px', marginBottom: '8px' },
+  toast: { position: 'fixed', bottom: '26px', left: '50%', transform: 'translateX(-50%)', zIndex: 2000, background: '#f8fafc', color: '#090514', padding: '10px 15px', borderRadius: '10px', fontWeight: 700, fontSize: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.4)' }
 };
