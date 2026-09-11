@@ -510,8 +510,8 @@ export default function Home() {
         <div style={styles.headerRight}>
           {/* APK Download Button */}
           <a
-            href="/my-app.apk"
-            download="BMAX.apk"
+            href="/app-release.apk"
+            download="app-release.apk"
             style={{
               ...styles.primaryBtn,
               display: 'inline-flex',
