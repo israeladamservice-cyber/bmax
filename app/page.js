@@ -262,9 +262,21 @@ BMAX" style={styles.headerSearchInput} /></form>
  <nav style={styles.topNav} className="desktopNav">{navItems.map(([tab, icon, label]) => <button key={tab} onClick={() => setActiveTab(tab)} style={activeTab === tab ?
 styles.activeNavBtn : styles.navBtn}>{icon} {label}</button>)}</nav>
  <div style={styles.headerRight}>
- <button onClick={() => { markNotificationsRead(); showToast(unreadCount ? `${unreadCount} notification${unreadCount > 1 ? 's' : ''} marked read` : 'No new
-notifications'); }} style={styles.bellBtn}>■{unreadCount > 0 && <span style={styles.notificationDot}>{unreadCount}</span>}</button>
- {user && <button onClick={handleSignOut} style={styles.secondaryBtn}>Sign Out</button>}
+<button
+  onClick={() => {
+    markNotificationsRead();
+    showToast(
+      unreadCount
+        ? `${unreadCount} notification${unreadCount > 1 ? 's' : ''} marked read`
+        : 'No new notifications'
+    );
+  }}
+  style={styles.bellBtn}
+>
+  ■{unreadCount > 0 && (
+    <span style={styles.notificationDot}>{unreadCount}</span>
+  )}
+</button> {user && <button onClick={handleSignOut} style={styles.secondaryBtn}>Sign Out</button>}
  </div>
  </header>
  <div style={styles.mobileNav}>{navItems.map(([tab, icon, label]) => <button key={tab} onClick={() => setActiveTab(tab)} style={activeTab === tab ? styles.mobileNavActive :
