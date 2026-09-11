@@ -90,7 +90,6 @@ export default function Home() {
     window._bmaxToastTimer = window.setTimeout(() => setToast(''), 2500);
   };
 
-  // Fetch posts from Supabase database
   const fetchPosts = async () => {
     const { data, error } = await supabase
       .from('posts')
@@ -121,7 +120,6 @@ export default function Home() {
     setActiveTab('discover');
   };
 
-  // Auth & Event Handlers
   const handleSignIn = async (e) => {
     e.preventDefault();
     setAuthMessage('');
@@ -174,7 +172,6 @@ export default function Home() {
     }
   };
 
-  // Cloudflare R2 upload helper (via Next.js API Route or direct S3 client configuration)
   const uploadToR2 = async (file, userId) => {
     const MAX_IMAGE = 25 * 1024 * 1024;
     const MAX_VIDEO = 100 * 1024 * 1024;
@@ -185,10 +182,9 @@ export default function Home() {
       throw new Error('Videos must be 100MB or smaller.');
     }
 
-    // Initialize S3 client configured for Cloudflare R2
     const s3 = new S3Client({
       region: 'auto',
-      endpoint: process.env.NEXT_PUBLIC_R2_ENDPOINT, // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+      endpoint: process.env.NEXT_PUBLIC_R2_ENDPOINT,
       credentials: {
         accessKeyId: process.env.NEXT_PUBLIC_R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.NEXT_PUBLIC_R2_SECRET_ACCESS_KEY,
@@ -208,17 +204,13 @@ export default function Home() {
 
     await s3.send(command);
 
-    // Construct public URL based on your configured R2 public domain or custom domain
-    const publicDomain = process.env.NEXT_PUBLIC_R2_PUBLIC_URL; // e.g., https://pub-xxx.r2.dev or custom domain
-    const url = `${publicDomain}/${fileName}`;
-
+    const publicDomain = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
     return {
-      url,
+      url: `${publicDomain}/${fileName}`,
       fileType: file.type.startsWith('video/') ? 'video' : 'image'
     };
   };
 
-  // Create post with Cloudflare R2 media & Supabase database record
   const handleCreatePost = async (e) => {
     e.preventDefault();
     if (!postText.trim() && !mediaFile) return;
@@ -266,7 +258,6 @@ export default function Home() {
     setEditCaption(post.caption);
   };
 
-  // Update post in Supabase
   const handleSaveEdit = async (postId) => {
     const { error } = await supabase
       .from('posts')
@@ -283,7 +274,6 @@ export default function Home() {
     showToast('Broadcast updated');
   };
 
-  // Delete post from Supabase
   const handleDeletePost = async (postId) => {
     const { error } = await supabase
       .from('posts')
@@ -993,7 +983,7 @@ const styles = {
   linkBtn: { background: 'transparent', border: 0, color: '#c084fc', cursor: 'pointer', padding: '4px' },
   sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' },
   sectionTitle: { margin: 0, fontSize: '16px', color: '#f8fafc' },
-  miniTag: { display: 'inline-flex', alignItems: 'center', background: '#1e1b4b', border: '1px solid #3b0764', color: '#c084fc', borderRadius: '999px', padding: '3px 7px', fontSize: '9px', fontWeight: 800, textTransform: uppercase },
+  miniTag: { display: 'inline-flex', alignItems: 'center', background: '#1e1b4b', border: '1px solid #3b0764', color: '#c084fc', borderRadius: '999px', padding: '3px 7px', fontSize: '9px', fontWeight: 800, textTransform: 'uppercase' },
   hubGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },
   hubCard: { background: '#090514', border: '1px solid #1e1b4b', borderRadius: '16px', padding: '18px' },
   hubIcon: { width: '48px', height: '48px', borderRadius: '13px', background: '#1e1b4b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', marginBottom: '10px' },
